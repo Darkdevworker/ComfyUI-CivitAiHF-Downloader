@@ -86,6 +86,57 @@ function _buildRatingCheckboxes(selectedStr, onChange) {
   return row;
 }
 
+// ── NSFW level matching (shared by model + gallery filters) ──────
+//   item.nsfwLevel: 0/None(PG), 1/Soft(PG13), 2/Mature(R), 3/X, 4/XXX (or 5)
+//   item.nsfw: boolean fallback
+//   flags: { hasPG13, hasR, hasX, hasXXX, anyNsfw }
+function _matchNsfw(item, flags) {
+  // Quick boolean check — item has nsfw:true and user wants any NSFW level
+  if (item.nsfw) { return flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX; }
+  // Also check alternate keys
+  var lvl = item.nsfwLevel;
+  if (lvl == null) { lvl = item.rating; }
+  if (lvl == null || lvl === "" || lvl === "null" || lvl === "undefined") {
+    // No level info — keep only if no explicit nsfw:false
+    return item.nsfw !== false;
+  }
+  // Try numeric first
+  var n = Number(lvl);
+  if (!isNaN(n)) {
+    // Normalise 0-5 range
+    if (n <= 0 || n === 0) { return false; }
+    if (n <= 1) { return flags.hasPG13; }
+    if (n <= 2) { return flags.hasR; }
+    // 3,4,5+ → X / XXX
+    return flags.hasX || flags.hasXXX;
+  }
+  // String matching — normalise to lower case
+  var s = String(lvl).toLowerCase().trim();
+  // PG / None / 0
+  if (s === "none" || s === "pg" || s === "g" || s === "everyone") { return false; }
+  // PG13 / Soft
+  if (s === "soft" || s === "pg13" || s === "pg-13" || s === "teen") { return flags.hasPG13; }
+  // R / Mature
+  if (s === "mature" || s === "r" || s === "r15" || s === "adult") { return flags.hasR; }
+  // X / XXX / R18 / explicit
+  if (s === "x" || s === "xxx" || s === "r18" || s === "r-18" || s === "r18+" || s === "explicit" || s === "nsfw") {
+    return flags.hasX || flags.hasXXX;
+  }
+  // Unknown string — keep it
+  return true;
+}
+
+// Extract active NSFW flags from the stored nsfw string (e.g. "Soft,Mature")
+function _nsfwFlags(val) {
+  if (!val) { return { hasPG13: false, hasR: false, hasX: false, hasXXX: false }; }
+  return {
+    hasPG13: val.indexOf("Soft") >= 0,
+    hasR: val.indexOf("Mature") >= 0,
+    hasX: val.indexOf("X") >= 0,
+    hasXXX: val.indexOf("XXX") >= 0,
+  };
+}
+
 // ── TTL Cache ─────────────────────────────────────────────────────
 var _cache = new (function() {
   this._map = new Map(); this._inflight = new Map(); this._max = 80; this._ttl = 60000;
@@ -337,32 +388,10 @@ function renderBrowse(pane) {
     var params = _lastParams();
     _api("/civitai/search?" + params.toString()).then(function(d) {
       S.civitai.items = d.items || [];
-      // Client-side NSFW rating filter (strict per-level when .com provides full nsfwLevel range)
-      var nsfwVal = S.civitai.nsfw;
-      if (nsfwVal) {
-        var hasPG13 = nsfwVal.indexOf("Soft") >= 0;
-        var hasR = nsfwVal.indexOf("Mature") >= 0;
-        var hasX = nsfwVal.indexOf("X") >= 0;
-        var hasXXX = nsfwVal.indexOf("XXX") >= 0;
-        S.civitai.items = S.civitai.items.filter(function(m) {
-          if (m.nsfw) return hasPG13 || hasR || hasX || hasXXX;
-          var lvl = m.nsfwLevel;
-          if (lvl == null) return true;
-          var n = Number(lvl);
-          if (!isNaN(n)) {
-            if (n === 0) return false;
-            if (n === 1) return hasPG13;
-            if (n === 2) return hasR;
-            if (n >= 3) return hasX || hasXXX;
-            return true;
-          }
-          var s = String(lvl);
-          if (s === "None") return false;
-          if (s === "Soft") return hasPG13;
-          if (s === "Mature") return hasR;
-          if (s === "X" || s === "XXX") return hasX || hasXXX;
-          return true;
-        });
+      // Client-side NSFW rating filter
+      var flags = _nsfwFlags(S.civitai.nsfw);
+      if (flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX) {
+        S.civitai.items = S.civitai.items.filter(function(m) { return _matchNsfw(m, flags); });
       }
       grid.innerHTML = "";
       if (!S.civitai.items.length) {
@@ -488,8 +517,8 @@ function _lookupCivitai(raw, fieldEl) {
 function _card(m) {
   var imgs = m.images || (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].images) || [];
   var firstImg = imgs[0];
-  var imgNsfw = firstImg && typeof firstImg === "object" && (firstImg.nsfw || (firstImg.nsfwLevel || 0) > 1);
-  var isNsfw = m.nsfw || (m.nsfwLevel || 0) > 1 || imgNsfw;
+  var anyFlags = { hasPG13:true, hasR:true, hasX:true, hasXXX:true };
+  var isNsfw = _matchNsfw(m, anyFlags) || (firstImg && _matchNsfw(firstImg, anyFlags));
   var imgUrl = firstImg ? (typeof firstImg === "string" ? firstImg : firstImg.url || "") : "";
   var card = el("div", { class: "cvt-card" });
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)" } });
@@ -650,32 +679,16 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     // Gallery
     gallery.innerHTML = "";
     var gFrag = document.createDocumentFragment();
-    var nsfwVal = S.civitai.nsfw;
-    var hasPG13 = nsfwVal && nsfwVal.indexOf("Soft") >= 0;
-    var hasR = nsfwVal && nsfwVal.indexOf("Mature") >= 0;
-    var hasX = nsfwVal && nsfwVal.indexOf("X") >= 0;
-    var hasXXX = nsfwVal && nsfwVal.indexOf("XXX") >= 0;
+    var gFlags = _nsfwFlags(S.civitai.nsfw);
+    var hasAnyFilter = gFlags.hasPG13 || gFlags.hasR || gFlags.hasX || gFlags.hasXXX;
     var imgs = (v.images || []).filter(function(im) {
-      if (!nsfwVal) return true;
-      var lvl = im.nsfwLevel;
-      if (lvl == null) return true;
-      var n = Number(lvl);
-      if (!isNaN(n)) {
-        if (n === 0) return false;
-        if (n === 1) return hasPG13;
-        if (n === 2) return hasR;
-        if (n >= 3) return hasX || hasXXX;
-        return true;
-      }
-      var s = String(lvl);
-      if (s === "None") return false;
-      if (s === "Soft") return hasPG13;
-      if (s === "Mature") return hasR;
-      if (s === "X" || s === "XXX") return hasX || hasXXX;
-      return true;
+      if (!hasAnyFilter) return true;
+      // Images may not have nsfw/nfsLevel on their own — inherit from model
+      if (im.nsfw == null && im.nsfwLevel == null) { return model.nsfw ? (gFlags.hasPG13 || gFlags.hasR || gFlags.hasX || gFlags.hasXXX) : true; }
+      return _matchNsfw(im, gFlags);
     });
     imgs.forEach(function(im) {
-      var nsfw = ((im.nsfwLevel || 0) > 1 || model.nsfw) && window.__nsfwBlurEnabled !== false;
+      var nsfw = _matchNsfw(im, { hasPG13:true, hasR:true, hasX:true, hasXXX:true }) && window.__nsfwBlurEnabled !== false;
       var imgEl = el("img", {
         src: _thumbUrl(im.url, 500), loading: "lazy", decoding: "async",
         class: nsfw ? "nsfw" : "",
@@ -828,7 +841,7 @@ function openLocalDetail(m, grid, filterIn) {
   // Left: model info + preview
   left.appendChild(el("h2", {}, m.name || ""));
 
-  var isNsfw = (m.nsfw || (m.nsfwLevel || 0) > 1) && window.__nsfwBlurEnabled !== false;
+  var isNsfw = _matchNsfw(m, { hasPG13:true, hasR:true, hasX:true, hasXXX:true }) && window.__nsfwBlurEnabled !== false;
 
   // Gallery of all local preview images
   var previewEl = el("img", { style: { width:"100%", aspectRatio:"3/4", objectFit:"cover", display:"block", borderRadius:"var(--civ-radius-sm)", background:"#141414", marginBottom:"6px", maxHeight:"35vh" } });
@@ -1646,7 +1659,7 @@ function _renderLocalGrid(grid, filterIn) {
 }
 
 function _localCard(m, grid, filterIn) {
-  var isNsfw = m.nsfw || (m.nsfwLevel || 0) > 1;
+  var isNsfw = _matchNsfw(m, { hasPG13:true, hasR:true, hasX:true, hasXXX:true });
   var imgUrl = m.preview ? "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=450" : "";
   var card = el("div", { class: "cvt-card" });
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)", position:"relative", overflow:"hidden" } });
