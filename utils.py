@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import urllib.parse
 import requests
 import folder_paths
 from collections import Counter
@@ -21,6 +22,15 @@ SUPPORTED_MODEL_TYPES = {
     "diffusion_models": "diffusion_models",
     "text_encoders": "text_encoders",
     "hypernetworks": "hypernetworks",
+    "controlnet": "controlnet",
+    "upscale_models": "upscale_models",
+    "clip_vision": "clip_vision",
+    "unet": "unet",
+    "instantid": "instantid",
+    "ipadapter": "ipadapter",
+    "photomaker": "photomaker",
+    "style_models": "style_models",
+    "wildcards": "wildcards",
 }
 
 
@@ -289,7 +299,49 @@ db_manager = DatabaseManager()
 
 def _get_active_domain():
     choice = db_manager.get_setting("network_choice", "com")
-    return "civitai.work" if choice == "work" else "civitai.com"
+    return {"work": "civitai.work", "red": "civitai.red", "com": "civitai.com"}.get(choice, "civitai.com")
+
+
+_MODEL_PAGE_RE = re.compile(r"(?<!/download)/models/(\d+)")
+_MODEL_VERSION_PAGE_RE = re.compile(r"/model-versions/(\d+)")
+_DOWNLOAD_RE = re.compile(r"/api/download/models/(\d+)")
+_AIR_RE = re.compile(r"urn:air:[^:]+:[^:]+:civitai:(\d+)@(\d+)", re.I)
+
+
+def parse_civitai_input(value):
+    """Parse various Civitai identifier formats. Returns dict with model_id, version_id."""
+    out = {"model_id": None, "version_id": None}
+    if not value:
+        return out
+    s = str(value).strip()
+    if not s:
+        return out
+    if s.isdigit():
+        out["version_id"] = int(s)
+        return out
+    m = _AIR_RE.search(s)
+    if m:
+        out["model_id"] = int(m.group(1))
+        out["version_id"] = int(m.group(2))
+        return out
+    m = _DOWNLOAD_RE.search(s)
+    if m:
+        out["version_id"] = int(m.group(1))
+    m = _MODEL_VERSION_PAGE_RE.search(s)
+    if m:
+        out["version_id"] = int(m.group(1))
+    m = _MODEL_PAGE_RE.search(s)
+    if m:
+        out["model_id"] = int(m.group(1))
+    qs = urllib.parse.urlparse(s).query
+    if qs:
+        params = urllib.parse.parse_qs(qs)
+        if "modelVersionId" in params:
+            try:
+                out["version_id"] = int(params["modelVersionId"][0])
+            except ValueError:
+                pass
+    return out
 
 
 SAMPLER_SCHEDULER_MAP = {
@@ -832,32 +884,99 @@ def format_resources_as_markdown(assoc_stats, total_images, top_n=10):
 
 def get_all_local_models_with_details(force_refresh=False):
     result = []
-    for model_type in ["checkpoints", "loras", "vae"]:
+    model_types = list(SUPPORTED_MODEL_TYPES.keys())
+    for model_type in model_types:
         try:
             name_to_hash, _ = get_local_model_maps(model_type, force_sync=force_refresh)
         except Exception:
-            continue
+            name_to_hash = {}
+        # If DB returned nothing, try direct filesystem listing
+        if not name_to_hash:
+            try:
+                known = folder_paths.get_filename_list(model_type)
+                for rel_path in known:
+                    full_path = folder_paths.get_full_path(model_type, rel_path)
+                    if full_path and os.path.isfile(full_path):
+                        name_to_hash[rel_path] = None
+            except Exception:
+                continue
         for name, fhash in name_to_hash.items():
             full_path = folder_paths.get_full_path(model_type, name)
-            size = os.path.getsize(full_path) if full_path and os.path.exists(full_path) else 0
+            if not full_path or not os.path.exists(full_path):
+                continue
+            size = os.path.getsize(full_path)
             size_str = f"{size / 1e9:.1f} GB" if size > 1e9 else f"{size / 1e6:.1f} MB"
+            folder = model_type
+            base_name = os.path.splitext(name)[0]
+
+            # Look for preview image
+            preview = None
+            for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                candidate = os.path.join(os.path.dirname(full_path), base_name + ext)
+                if os.path.isfile(candidate):
+                    preview = candidate
+                    break
+            # Also check preview subfolder
+            if not preview:
+                pf = os.path.join(os.path.dirname(full_path), "preview", base_name + ".png")
+                if os.path.isfile(pf):
+                    preview = pf
+
+            # Load metadata sidecar
+            metadata = {}
+            json_path = full_path.replace(".safetensors", ".civitai.json")
+            if os.path.isfile(json_path):
+                try:
+                    with open(json_path) as f:
+                        metadata = json.load(f)
+                except Exception:
+                    pass
+
+            base_model = metadata.get("baseModel", "")
+            creator = ""
+            tags = []
+            description = ""
+            model_id = None
+
             civitai_info = None
             if fhash:
                 try:
                     ci = CivitaiAPIUtils.get_model_version_info_by_hash(fhash)
                     if ci:
+                        model_data = ci.get("model", ci)
+                        model_id = ci.get("modelId") or model_data.get("id")
+                        creator = model_data.get("creator", {})
+                        if isinstance(creator, dict):
+                            creator = creator.get("username", creator.get("name", ""))
+                        tags = ci.get("tags", model_data.get("tags", []))
+                        description = ci.get("description", model_data.get("description", ""))[:500]
+                        base_model = base_model or ci.get("baseModel", "")
+                        # Use Civitai preview if no local preview
+                        if not preview and ci.get("images"):
+                            img = ci["images"][0]
+                            if isinstance(img, dict):
+                                preview = img.get("url", "")
                         civitai_info = {
-                            "name": ci.get("model", {}).get("name", ci.get("name", "")),
-                            "id": ci.get("modelId"),
-                            "url": f"https://{_get_active_domain()}/models/{ci.get('modelId')}",
+                            "name": model_data.get("name", ci.get("name", "")),
+                            "id": model_id,
+                            "url": f"https://{_get_active_domain()}/models/{model_id}",
+                            "versionId": ci.get("id"),
                         }
                 except Exception:
                     pass
+
             result.append({
                 "name": name, "type": model_type, "path": full_path,
-                "size": size_str, "hash": fhash,
+                "size": size_str, "size_mb": round(size / 1e6, 1),
+                "hash": fhash, "folder": folder,
+                "preview": preview,
+                "base_model": base_model,
+                "creator": creator,
+                "tags": tags,
+                "description": description,
                 "hasCivitai": civitai_info is not None,
                 "civitai": civitai_info,
+                "model_id": model_id,
             })
     return result
 
@@ -870,3 +989,100 @@ def initiate_background_scan(main_loop):
         except Exception:
             pass
     threading.Thread(target=_scan, daemon=True).start()
+
+
+MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf"}
+
+
+def scan_local_models_direct():
+    """
+    Recursive filesystem scan of models_dir — finds ALL model files in ALL
+    subfolders, not just SUPPORTED_MODEL_TYPES. Groups by immediate parent folder.
+    """
+    result = []
+    models_dir = folder_paths.models_dir
+    if not models_dir or not os.path.isdir(models_dir):
+        return result
+
+    for dirpath, _dirnames, filenames in os.walk(models_dir, followlinks=True):
+        for fname in filenames:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in MODEL_EXTENSIONS:
+                continue
+            try:
+                full_path = os.path.join(dirpath, fname)
+                if not os.path.isfile(full_path):
+                    continue
+                # Determine folder type from immediate parent relative to models_dir
+                rel = os.path.relpath(dirpath, models_dir)
+                folder = rel.split(os.sep)[0] if rel != "." else "other"
+                name = os.path.relpath(full_path, models_dir)
+
+                size = os.path.getsize(full_path)
+                size_str = f"{size / 1e9:.1f} GB" if size > 1e9 else f"{size / 1e6:.1f} MB"
+                base_name = os.path.splitext(fname)[0]
+
+                # Look for preview image
+                preview = None
+                for pext in [".png", ".jpg", ".jpeg", ".webp"]:
+                    candidate = os.path.join(dirpath, base_name + pext)
+                    if os.path.isfile(candidate):
+                        preview = candidate
+                        break
+                if not preview:
+                    pf = os.path.join(dirpath, "preview", base_name + ".png")
+                    if os.path.isfile(pf):
+                        preview = pf
+
+                # Load metadata sidecar
+                metadata = {}
+                json_path = full_path.replace(".safetensors", ".civitai.json")
+                if os.path.isfile(json_path):
+                    try:
+                        with open(json_path) as f:
+                            metadata = json.load(f)
+                    except Exception:
+                        pass
+
+                nsfw = metadata.get("nsfw", False) or metadata.get("model", {}).get("nsfw", False)
+                if not nsfw:
+                    versions = metadata.get("model", {}).get("modelVersions", [metadata])
+                    if versions and isinstance(versions[0], dict):
+                        nsfw = versions[0].get("nsfw", False)
+                tags = metadata.get("model", {}).get("tags", [])
+                if not tags and "tags" in metadata:
+                    tags = metadata["tags"] if isinstance(metadata["tags"], list) else []
+                description = metadata.get("model", {}).get("description", "") or metadata.get("description", "")
+                creator = metadata.get("model", {}).get("creator", {})
+                if isinstance(creator, dict):
+                    creator = creator.get("username", creator.get("name", ""))
+                elif not isinstance(creator, str):
+                    creator = ""
+                fhash = metadata.get("hashes", {}).get("SHA256", "")
+                if not fhash:
+                    versions = metadata.get("model", {}).get("modelVersions", [metadata])
+                    if versions and isinstance(versions[0], dict):
+                        fhash = versions[0].get("hashes", {}).get("SHA256", "")
+                model_id = metadata.get("modelId", "") or metadata.get("model", {}).get("id", "")
+
+                result.append({
+                    "name": name,
+                    "type": folder,
+                    "path": full_path,
+                    "size": size_str,
+                    "size_mb": round(size / 1e6, 1),
+                    "hash": fhash or None,
+                    "nsfw": nsfw,
+                    "folder": folder,
+                    "preview": preview,
+                    "base_model": metadata.get("baseModel", ""),
+                    "creator": creator,
+                    "tags": tags,
+                    "description": description[:500] if description else "",
+                    "hasCivitai": bool(fhash),
+                    "civitai": None,
+                    "model_id": model_id or None,
+                })
+            except Exception:
+                continue
+    return result

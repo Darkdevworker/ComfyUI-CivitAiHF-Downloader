@@ -1,7 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-// ── el() helper – lightweight DOM builder ──────────────────────────
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   if (attrs) for (const [k, v] of Object.entries(attrs)) {
@@ -9,642 +8,1922 @@ function el(tag, attrs, ...children) {
     else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
     else if (k === "class") node.className = v;
     else if (k === "dataset") Object.assign(node.dataset, v);
+    else if (typeof v === "boolean") { if (v) node.setAttribute(k, ""); else node.removeAttribute(k); }
     else node.setAttribute(k, v);
   }
   for (const c of children) {
-    if (c == null) continue;
+    if (c == null || c === false) continue;
     if (typeof c === "string" || typeof c === "number") node.appendChild(document.createTextNode(c));
     else if (c instanceof Node) node.appendChild(c);
-    else if (Array.isArray(c)) for (const x of c.flat(Infinity)) if (x instanceof Node) node.appendChild(x);
+    else if (Array.isArray(c)) c.flat().forEach(x => { if (x instanceof Node) node.appendChild(x); });
   }
   return node;
 }
 
-// ── State ───────────────────────────────────────────────────────────
-const S = {
-  curTab: "civitai",
-  civitai: { items: [], page: 1, query: "", type: "", sort: "Newest", nsfw: false },
-  hf: { items: [], query: "", sort: "lastModified" },
-  downloads: [],
-  local: { models: [], filter: "" },
-  settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, verify: true, nsfw: false, hasApiKey: false, hasHfToken: false },
+const CIVITAI_TYPES = [
+  "", "Checkpoint", "LORA", "LoCon", "DoRA", "TextualInversion",
+  "Hypernetwork", "AestheticGradient", "Controlnet", "VAE",
+  "Upscaler", "MotionModule", "Poses", "Wildcards", "Workflows", "Other",
+];
+const CIVITAI_SORTS = [
+  "Highest Rated", "Most Downloaded", "Most Liked", "Most Discussed",
+  "Most Collected", "Most Images", "Newest", "Oldest", "Relevancy",
+];
+const CIVITAI_PERIODS = ["AllTime", "Year", "Month", "Week", "Day"];
+const CIVITAI_BASE_MODELS = [
+  "", "SD 1.4", "SD 1.5", "SD 1.5 LCM", "SD 1.5 Hyper",
+  "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768", "SD 2.1 Unclip",
+  "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Distilled", "SDXL Lightning",
+  "Pony", "Illustrious", "NoobAI",
+  "Stable Cascade",
+  "Flux.1 D", "Flux.1 S", "Flux.1 Kontext", "Flux.1 Krea",
+  "Z-Image", "ZImageBase", "ZImageTurbo",
+  "Qwen", "Qwen 2",
+  "Hunyuan 1", "Hunyuan Video",
+  "Wan Video", "Wan Video 1.3B t2v", "Wan Video 14B t2v", "Wan Video 14B i2v 480p",
+  "LTXV", "LTXV 2.3", "CogVideoX", "Mochi", "SVD XT",
+  "AuraFlow", "Chroma", "HiDream", "Kolors", "Lumina",
+  "PixArt a", "PixArt E", "Playground v2", "ODOR", "Other",
+];
+const HF_PIPELINES = [
+  "", "text-to-image", "image-to-image", "image-to-video",
+  "text-to-video", "video-to-video", "image-to-3d", "text-to-3d",
+  "depth-estimation", "image-segmentation",
+  "automatic-speech-recognition", "text-to-speech",
+  "text-generation", "feature-extraction", "sentence-similarity",
+];
+const HF_LIBRARIES = ["", "diffusers", "transformers", "gguf", "onnx",
+                      "sentence-transformers", "peft", "safetensors"];
+const HF_SORTS = ["downloads", "likes", "trending_score", "createdAt", "lastModified"];
+const NSFW_RATINGS = [
+  { label: "PG", value: "" },
+  { label: "PG13", value: "Soft" },
+  { label: "R", value: "Mature" },
+  { label: "X", value: "X" },
+  { label: "XXX", value: "XXX" },
+];
+
+function _buildRatingCheckboxes(selectedStr, onChange) {
+  var selected = selectedStr ? selectedStr.split(",").filter(Boolean) : [];
+  var cbs = {};
+  var row = el("div", { style: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap" } });
+  NSFW_RATINGS.forEach(function(r) {
+    var cb = el("input", { type: "checkbox", value: r.value });
+    var checked = r.value ? selected.indexOf(r.value) >= 0 : selected.length === 0;
+    cb.checked = checked;
+    cb.onchange = onChange;
+    cbs[r.label] = cb;
+    row.appendChild(el("label", { style: { display: "inline-flex", alignItems: "center", gap: "2px", cursor: "pointer", fontSize: "11px", whiteSpace: "nowrap", color: "var(--civ-text-dim)" } }, cb, " ", r.label));
+  });
+  row._cbs = cbs;
+  row._getVal = function() {
+    var vals = [];
+    NSFW_RATINGS.forEach(function(r) {
+      if (r.value && cbs[r.label].checked) vals.push(r.value);
+    });
+    return vals.join(",");
+  };
+  return row;
+}
+
+// ── TTL Cache ─────────────────────────────────────────────────────
+var _cache = new (function() {
+  this._map = new Map(); this._inflight = new Map(); this._max = 80; this._ttl = 60000;
+  this.get = function(k) { var e = this._map.get(k); if (!e) return null; if (e.exp < Date.now()) { this._map.delete(k); return null; } this._map.delete(k); this._map.set(k, e); return e.v; };
+  this.set = function(k, v) { this._map.set(k, { v: v, exp: Date.now() + this._ttl }); if (this._map.size > this._max) { var ok = this._map.keys().next().value; this._map.delete(ok); } };
+  this.clear = function() { this._map.clear(); this._inflight.clear(); };
+})();
+
+var _activeJobs = 0;
+var _jobsTimer = null;
+var _hintTimer = null;
+var _localPromptCache = {};
+
+var S = {
+  curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModel: "", loading: false,
+    cursor: "", cursorStack: [], nextCursor: null, limit: 24 },
+  hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "" },
+  downloads: [], local: { models: [], filter: "" },
+  settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true },
   modal: null, lightbox: null,
+  root: null,
 };
 
-// ── Helpers ─────────────────────────────────────────────────────────
-function $(id) { return document.getElementById(id); }
-function _txt(t) { return document.createTextNode(t); }
-function _api(path, opts = {}) { return api.fetchApi(path, opts).then(r => r.json()); }
-function _fmtBytes(n) { if (!n) return "—"; const u = ["B","KB","MB","GB","TB"]; let i = 0; let s = n; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
+function _api(path, opts) {
+  var method = (opts && opts.method || "GET").toUpperCase();
+  var cacheKey = method === "GET" ? path : null;
+  if (cacheKey) {
+    var cached = _cache.get(cacheKey);
+    if (cached) return Promise.resolve(cached);
+    var pending = _cache._inflight.get(cacheKey);
+    if (pending) return pending;
+  }
+  var p = api.fetchApi(path, opts || {}).then(function(r) {
+    if (!r.ok) {
+      var err = new Error("HTTP " + r.status);
+      err.status = r.status;
+      err.transient = [408, 425, 429, 500, 502, 503, 504].indexOf(r.status) >= 0;
+      throw err;
+    }
+    return r.json().catch(function() { return {}; });
+  }).then(function(json) {
+    if (cacheKey) { var items = json && json.items; if (!items || items.length > 0) _cache.set(cacheKey, json); }
+    return json;
+  });
+  if (cacheKey) { _cache._inflight.set(cacheKey, p); p.then(function() { _cache._inflight.delete(cacheKey); }, function() { _cache._inflight.delete(cacheKey); }); }
+  return p;
+}
+function _fmtBytes(n) { if (!n) return "\u2014"; const u = ["B","KB","MB","GB","TB"]; let i = 0; let s = n; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
 function _fmtNum(n) { if (n == null) return "?"; if (n < 1e3) return String(n); if (n < 1e6) return (n/1e3).toFixed(n<1e4?1:0)+"K"; if (n < 1e9) return (n/1e6).toFixed(n<1e7?1:0)+"M"; return (n/1e9).toFixed(1)+"B"; }
-function _toast(msg, type = "ok") {
+function _thumbUrl(url, w) {
+  if (!url) return url;
+  w = w || 450;
+  // Civitai CDN uses path-based width: /width=NNN/ or /...,width=NNN/ -> /width=WWW/
+  if (url.indexOf("image.civitai.com") >= 0) {
+    return url.replace(/(\/|\b)width=\d+(\/|,)/, "$1width=" + w + "$2");
+  }
+  var sep = url.indexOf("?") >= 0 ? "&" : "?";
+  return url + sep + "width=" + w;
+}
+
+function _flashHint(sb, text) {
+  if (_hintTimer) clearTimeout(_hintTimer);
+  var h = sb.querySelector(".cvt-flash");
+  if (!h) { h = el("div", { class: "cvt-flash" }); sb.appendChild(h); }
+  h.textContent = text;
+  _hintTimer = setTimeout(function() { h.textContent = ""; }, 4000);
+}
+
+function _renderSkeletons(grid, n) {
+  n = n || 12;
+  grid.innerHTML = "";
+  for (var i = 0; i < n; i++) grid.appendChild(el("div", { class: "cvt-skel" }));
+}
+
+function _toast(msg, type) {
   let wrap = document.querySelector(".cvt-toast-wrap");
   if (!wrap) { wrap = el("div", { class: "cvt-toast-wrap" }); document.body.appendChild(wrap); }
-  const t = el("div", { class: `cvt-toast ${type}` }, msg);
+  const t = el("div", { class: "cvt-toast " + (type || "ok") }, msg);
   wrap.appendChild(t);
   setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .3s"; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
-// ── Load CSS ────────────────────────────────────────────────────────
 (function injectCSS() {
   if (document.getElementById("cvt-css")) return;
   const link = document.createElement("link");
   link.id = "cvt-css"; link.rel = "stylesheet";
   try { link.href = new URL("civitai.css", import.meta.url).href; }
-  catch(e) { link.href = "/extensions/ComfyUI-CivitAiHF-Downloader/civitai.css"; }
+  catch (e) { link.href = "civitai.css"; }
   document.head.appendChild(link);
 })();
 
-// ── Build root UI ───────────────────────────────────────────────────
+
+
 const TABS = [
-  ["civitai", "Browse", "🔍"], ["hf", "HF", "🤗"],
-  ["downloads", "Downloads", "⬇"], ["local", "Local", "📁"], ["settings", "⚙", "⚙"],
+  ["civitai", "Civitai", "\uD83C\uDDE8", "emoji-float"],
+  ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
+  ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
+  ["local", "Local", "\uD83D\uDCC1", "emoji-wiggle"],
+  ["settings", "Settings", "\u2699\uFE0F", "emoji-spin"],
 ];
 
 function buildUI() {
-  const root = el("div", { class: "cvt-root" });
-  const tabBar = el("div", { class: "cvt-tabs" });
-  const panes = {};
-  TABS.forEach(([id, label, icon]) => {
-    const btn = el("button", { class: `cvt-tab${id==="civitai"?" active":""}`, dataset: { tab: id } },
-      el("span", { class: "tab-emoji" }, icon), " ", label);
-    btn.onclick = () => switchTab(id, tabBar, panes);
+  var root = el("div", { class: "cvt-root" });
+  S.root = root;
+
+  // Custom tab switching events
+  root.addEventListener("civitai:show-tab", function(e) {
+    var which = e.detail;
+    var tab = tabBar.querySelector('[data-tab="' + which + '"]');
+    if (tab) tab.click();
+  });
+
+  var tabBar = el("div", { class: "cvt-tabs" });
+  var panes = {};
+  TABS.forEach(function(t) {
+    var id = t[0], label = t[1], icon = t[2], anim = t[3];
+    var emojiSpan = el("span", { class: "tab-emoji" }, icon);
+    var btn = el("button", { class: "cvt-tab" + (id === "civitai" ? " active" : ""), dataset: { tab: id } },
+      emojiSpan, " ", label);
+    // Only the active tab animates (UX guideline: avoid excessive motion)
+    if (id === "civitai") emojiSpan.classList.add(anim);
+    btn._anim = anim; btn._emoji = emojiSpan;
+    btn.onclick = function() { _switchTab(id, tabBar, panes); };
     tabBar.appendChild(btn);
-    const pane = el("div", { class: `cvt-pane${id==="civitai"?" active":""}`, id: `cvt-pane-${id}` });
+    var pane = el("div", { class: "cvt-pane" + (id === "civitai" ? " active" : ""), id: "cvt-pane-" + id });
     panes[id] = pane;
     root.appendChild(pane);
   });
   root.insertBefore(tabBar, root.firstChild);
-  // Populate initial active tab
-  renderBrowse(panes.civitai);
-  return { root, tabBar, panes };
+  renderBrowse(panes.civitai); panes.civitai._rendered = true;
+  return root;
 }
 
-function switchTab(id, tabBar, panes) {
+function _switchTab(id, tabBar, panes) {
   S.curTab = id;
-  tabBar.querySelectorAll(".cvt-tab").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
-  Object.entries(panes).forEach(([k, p]) => p.classList.toggle("active", k === id));
-  const pane = panes[id];
+  tabBar.querySelectorAll(".cvt-tab").forEach(function(b) {
+    var isActive = b.dataset.tab === id;
+    b.classList.toggle("active", isActive);
+    var anim = b._anim;
+    if (b._emoji && anim) {
+      b._emoji.classList.toggle(anim, isActive);
+    }
+  });
+  Object.keys(panes).forEach(function(k) { panes[k].classList.toggle("active", k === id); });
+  var pane = panes[id];
   if (!pane) return;
-  pane.innerHTML = "";
-  if (id === "civitai") renderBrowse(pane);
-  else if (id === "hf") renderHF(pane);
-  else if (id === "downloads") renderDownloads(pane);
-  else if (id === "local") renderLocal(pane);
-  else if (id === "settings") renderSettings(pane);
+  if (!pane._rendered) {
+    pane._rendered = true;
+    if (id === "civitai") renderBrowse(pane);
+    else if (id === "hf") renderHF(pane);
+    else if (id === "downloads") renderDownloads(pane);
+    else if (id === "local") renderLocal(pane);
+    else if (id === "settings") renderSettings(pane);
+  }
 }
 
-// ── Emoji animations (reusable) ─────────────────────────────────────
-const _emojiAnim = { "🔍":"emoji-float", "🤗":"emoji-bounce", "⬇":"emoji-pulse", "📁":"emoji-wiggle", "⚙":"emoji-spin" };
+function closeLightbox() { if (S._closeLB) { S._closeLB(); S._closeLB = null; } else if (S.lightbox) { S.lightbox.remove(); S.lightbox = null; } }
+function closeModal() { if (S.modal) { S.modal.remove(); S.modal = null; } }
+document.addEventListener("keydown", function(e) { if (e.key === "Escape") { closeModal(); closeLightbox(); } });
 
-// =====================================================================
-// 1. BROWSE — Civitai model search
-// =====================================================================
-let _browseBuilt = false;
+// ── 1. BROWSE ────────────────────────────────────────────────────────
 function renderBrowse(pane) {
-  _browseBuilt = true;
-  const sb = el("div", { class: "cvt-searchbar" });
+  var sb = el("div", { class: "cvt-searchbar" });
 
-  const row1 = el("div", { class: "cvt-row" });
-  const qIn = el("input", { type: "text", placeholder: "Search Civitai…", id: "cvt-q" });
-  const sortSel = el("select", { id: "cvt-sort" },
-    ...(["Newest","Most Downloaded","Highest Rated"].map(s => el("option", { value: s }, s))));
-  row1.append(qIn, sortSel);
-  sb.appendChild(row1);
+  // ---- Manual entry row (lookup by ID / URL / hash) ----
+  var lookupIn = el("input", { type: "text", placeholder: "URL / ID / SHA256 / AIR\u2026", style: { flex:"1", fontFamily:"monospace", fontSize:"11px", background:"#1c1410", borderColor:"#5a3a2a" } });
+  var lookupBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, "\uD83C\uDFAF");
+  var lookupRow = el("div", { class: "cvt-row", style: { marginBottom:"6px" } });
+  lookupRow.appendChild(lookupIn); lookupRow.appendChild(lookupBtn);
+  sb.appendChild(lookupRow);
 
-  const row2 = el("div", { class: "cvt-row" });
-  const nsfwCb = el("input", { type: "checkbox", id: "cvt-nsfw" });
-  const nsfwLbl = el("label", { style: { display:"flex",alignItems:"center",gap:"4px",fontSize:"12px",whiteSpace:"nowrap",color:"var(--civ-text-dim)" } }, nsfwCb, " NSFW");
-  const typeSel = el("select", { id: "cvt-type", style: { flex:"0 0 auto" } },
-    ...(["","Checkpoint","LORA","TextualInversion","VAE"].map(t => el("option", { value: t }, t || "All types"))));
-  const goBtn = el("button", { class: "cvt-btn" }, el("span", { class: "emoji-btn emoji-float" }, "🔍"), " Search");
-  row2.append(nsfwLbl, typeSel, goBtn);
+  lookupBtn.onclick = function() { _lookupCivitai(lookupIn.value, lookupIn); };
+  lookupIn.onkeydown = function(e) { if (e.key === "Enter") lookupBtn.click(); };
+
+  // ---- Search row 1 ----
+  var row1 = el("div", { class: "cvt-row" });
+  var qIn = el("input", { type: "text", placeholder: "Search Civitai\u2026", id: "cvt-q", style: { flex:1 } });
+  var sortSel = el("select", { id: "cvt-sort", class: "cvt-select-sm", title: "Sort by" });
+  CIVITAI_SORTS.forEach(function(s) { sortSel.appendChild(el("option", { value: s }, s)); });
+  row1.appendChild(qIn); row1.appendChild(sortSel); sb.appendChild(row1);
+
+  // ---- Search row 2 (free-typeable datalist) ----
+  var row2 = el("div", { class: "cvt-row", style: { flexWrap:"wrap", gap:"4px", alignItems:"center" } });
+  var typeSel = el("select", { id: "cvt-type", class: "cvt-select-sm", title: "Type" });
+  CIVITAI_TYPES.forEach(function(t) { typeSel.appendChild(el("option", { value: t }, t || "All types")); });
+  var periodSel = el("select", { id: "cvt-period", class: "cvt-select-sm", title: "Period" });
+  CIVITAI_PERIODS.forEach(function(p) { periodSel.appendChild(el("option", { value: p }, p)); });
+  var baseListId = "cvt-base-list-" + Math.random().toString(36).slice(2, 8);
+  var baseIn = el("input", { type: "text", list: baseListId, placeholder: "Base model\u2026", autocomplete: "off", style: { flex:"0 0 auto", maxWidth:"120px" } });
+  var baseDl = el("datalist", { id: baseListId });
+  CIVITAI_BASE_MODELS.forEach(function(b) { if (b) baseDl.appendChild(el("option", { value: b })); });
+  baseIn.onkeydown = function(e) { if (e.key === "Enter") { _resetAndSearch(); } };
+  var goBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, el("span", { class: "emoji-btn emoji-float" }, "\uD83D\uDD0D"), " Search");
+  row2.appendChild(typeSel); row2.appendChild(periodSel); row2.appendChild(baseIn); row2.appendChild(goBtn);
   sb.appendChild(row2);
+  sb.appendChild(baseDl);
+  // ---- NSFW rating row below ----
+  var ratingRow = _buildRatingCheckboxes(S.civitai.nsfw || "", function() { S.civitai.nsfw = ratingRow._getVal(); _resetAndSearch(); });
+  sb.appendChild(el("div", { class: "cvt-row", style: { marginTop:"4px" } }, ratingRow));
   pane.appendChild(sb);
 
-  const grid = el("div", { class: "cvt-grid", id: "cvt-grid" });
-  const empty = el("div", { class: "cvt-empty" }, "Use the search bar above to find models on Civitai.");
-  pane.append(grid, empty);
-  const pager = el("div", { class: "cvt-pager" });
-  const prevBtn = el("button", { class: "cvt-btn ghost", disabled: "true" }, "← Prev");
-  const pageInfo = el("span", { class: "page-info" }, "Page 1");
-  const nextBtn = el("button", { class: "cvt-btn ghost" }, "Next →");
-  pager.append(prevBtn, pageInfo, nextBtn);
+  var grid = el("div", { class: "cvt-grid", id: "cvt-grid" });
+  var empty = el("div", { class: "cvt-empty" }, "\u2728  Type a query and hit Search, or just press Search for the top models.");
+  pane.appendChild(grid);
+  pane.appendChild(empty);
+  var pager = el("div", { class: "cvt-pager" });
+  var prevBtn = el("button", { class: "cvt-btn ghost", disabled: true }, "\u2190 Prev");
+  var pageInfo = el("span", { class: "page-info" }, "Page 1");
+  var nextBtn = el("button", { class: "cvt-btn ghost" }, "Next \u2192");
+  pager.appendChild(prevBtn); pager.appendChild(pageInfo); pager.appendChild(nextBtn);
   pane.appendChild(pager);
 
-  async function search() {
-    grid.innerHTML = `<div class="cvt-spinner"></div>`;
+  function _resetAndSearch() {
+    S.civitai.cursor = "";
+    S.civitai.cursorStack = [];
+    S.civitai.nextCursor = null;
+    _cache.clear();
+    _runSearch();
+  }
+
+  function _lastParams() {
+    var params = new URLSearchParams({
+      sort: S.civitai.sort, period: S.civitai.period,
+      types: S.civitai.type, limit: String(S.civitai.limit),
+    });
+    if (S.civitai.nsfw) params.set("nsfw", "true");
+    if (S.civitai.query) params.set("query", S.civitai.query);
+    if (S.civitai.cursor) params.set("cursor", S.civitai.cursor);
+    if (S.civitai.baseModel) params.set("baseModels", S.civitai.baseModel);
+    return params;
+  }
+
+  function _runSearch(attempt) {
+    attempt = attempt || 1;
+    if (S.civitai.loading) return;
+    S.civitai.loading = true;
+    _renderSkeletons(grid, S.civitai.limit);
     empty.style.display = "none";
     S.civitai.query = qIn.value;
     S.civitai.sort = sortSel.value;
-    S.civitai.nsfw = nsfwCb.checked;
+    S.civitai.nsfw = ratingRow._getVal();
     S.civitai.type = typeSel.value;
-    const params = new URLSearchParams({ query: S.civitai.query, sort: S.civitai.sort, page: S.civitai.page, nsfw: S.civitai.nsfw, type: S.civitai.type });
-    try {
-      const d = await _api(`/civitai/search?${params}`);
+    S.civitai.period = periodSel.value;
+    S.civitai.baseModel = (baseIn.value || "").trim();
+    if (S.civitai.sort === "Relevancy" && !S.civitai.query) {
+      S.civitai.sort = "Highest Rated"; sortSel.value = "Highest Rated";
+      _flashHint(sb, "\u26A0\uFE0F Relevancy requires a search query \u2014 switched to Highest Rated.");
+    }
+    var params = _lastParams();
+    _api("/civitai/search?" + params.toString()).then(function(d) {
       S.civitai.items = d.items || [];
+      // Client-side NSFW rating filter (strict per-level when .com provides full nsfwLevel range)
+      var nsfwVal = S.civitai.nsfw;
+      if (nsfwVal) {
+        var hasPG13 = nsfwVal.indexOf("Soft") >= 0;
+        var hasR = nsfwVal.indexOf("Mature") >= 0;
+        var hasX = nsfwVal.indexOf("X") >= 0;
+        var hasXXX = nsfwVal.indexOf("XXX") >= 0;
+        S.civitai.items = S.civitai.items.filter(function(m) {
+          if (m.nsfw) return hasPG13 || hasR || hasX || hasXXX;
+          var lvl = m.nsfwLevel;
+          if (lvl == null) return true;
+          var n = Number(lvl);
+          if (!isNaN(n)) {
+            if (n === 0) return false;
+            if (n === 1) return hasPG13;
+            if (n === 2) return hasR;
+            if (n >= 3) return hasX || hasXXX;
+            return true;
+          }
+          var s = String(lvl);
+          if (s === "None") return false;
+          if (s === "Soft") return hasPG13;
+          if (s === "Mature") return hasR;
+          if (s === "X" || s === "XXX") return hasX || hasXXX;
+          return true;
+        });
+      }
       grid.innerHTML = "";
-      if (!S.civitai.items.length) { empty.style.display = "block"; empty.textContent = "No models found."; return; }
-      S.civitai.items.forEach(m => grid.appendChild(_card(m)));
-      pageInfo.textContent = `Page ${S.civitai.page}`;
-      prevBtn.disabled = S.civitai.page <= 1;
-    } catch (e) { grid.innerHTML = ""; empty.style.display = "block"; empty.innerHTML = `<span style="color:#f88">Error: ${e.message}</span>`; }
+      if (!S.civitai.items.length) {
+        empty.style.display = "block";
+        empty.innerHTML = "\uD83D\uDD0E  No models match. Try a different query.";
+        pager.innerHTML = "";
+        return;
+      }
+      var frag = document.createDocumentFragment();
+      S.civitai.items.forEach(function(m) { frag.appendChild(_card(m)); });
+      grid.appendChild(frag);
+
+      S.civitai.nextCursor = d && d.metadata && d.metadata.nextCursor ? d.metadata.nextCursor : null;
+      var pageNum = S.civitai.cursorStack.length + 1;
+      pageInfo.textContent = "Page " + pageNum;
+      prevBtn.disabled = !S.civitai.cursorStack.length;
+      nextBtn.disabled = !S.civitai.nextCursor;
+    }).catch(function(e) {
+      _showSearchError(e, attempt, sb, grid, empty, pager);
+    }).then(function() { S.civitai.loading = false; });
   }
 
-  goBtn.onclick = () => { S.civitai.page = 1; search(); };
-  qIn.onkeydown = e => { if (e.key === "Enter") { S.civitai.page = 1; search(); } };
-  prevBtn.onclick = () => { if (S.civitai.page > 1) { S.civitai.page--; search(); } };
-  nextBtn.onclick = () => { S.civitai.page++; search(); };
+  function _showSearchError(e, attempt, sb, grid, empty, pager) {
+    grid.innerHTML = "";
+    pager.innerHTML = "";
+    var isTransient = !!e.transient;
+    var code = e.status || 0;
+    var heading = isTransient
+      ? (code === 429 ? "You\u2019re being rate-limited" : "Civitai is busy right now")
+      : (code === 401 ? "Unauthorized" : code === 404 ? "Not found" : "Search failed");
+
+    var box = el("div", { style: { background:"linear-gradient(135deg,rgba(244,114,182,.08),rgba(96,165,250,.08))", border:"1px solid var(--civ-line-strong)", borderRadius:"var(--civ-radius)", padding:"14px 16px", color:"var(--civ-text)" } });
+    box.appendChild(el("div", { style: { fontWeight:700, marginBottom:"6px", background:"var(--civ-grad-primary)", WebkitBackgroundClip:"text", backgroundClip:"text", color:"transparent" } }, heading));
+    if (e.message) box.appendChild(el("div", { style: { fontSize:"12px", marginBottom:"10px", color:"var(--civ-text-dim)" } }, e.message));
+
+    var retryBtn = el("button", { class: "cvt-btn" }, "\u21BB Retry now");
+    retryBtn.onclick = function() { _runSearch(1); };
+    box.appendChild(retryBtn);
+
+    if (isTransient && attempt <= 5) {
+      var baseDelay = Math.min(30, 3 * Math.pow(2, attempt - 1));
+      var remaining = baseDelay;
+      var note = el("span", { style: { marginLeft:"10px", fontSize:"11px", color:"#bba" } }, "Auto-retry in " + remaining + "s");
+      box.appendChild(note);
+      var retryTimer = setInterval(function() {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(retryTimer);
+          _runSearch(attempt + 1);
+        } else {
+          note.textContent = "Auto-retry in " + remaining + "s";
+        }
+      }, 1000);
+    }
+
+    empty.style.display = "block";
+    empty.innerHTML = "";
+    empty.appendChild(box);
+  }
+
+  goBtn.onclick = function() { _resetAndSearch(); };
+  qIn.onkeydown = function(e) { if (e.key === "Enter") { _resetAndSearch(); } };
+  prevBtn.onclick = function() {
+    if (S.civitai.cursorStack.length) {
+      S.civitai.cursor = S.civitai.cursorStack.pop() || "";
+      _runSearch();
+    }
+  };
+  nextBtn.onclick = function() {
+    if (S.civitai.nextCursor) {
+      S.civitai.cursorStack.push(S.civitai.cursor);
+      S.civitai.cursor = S.civitai.nextCursor;
+      _runSearch();
+    }
+  };
+}
+
+function _lookupCivitai(raw, fieldEl) {
+  var v = (raw || "").trim();
+  if (!v) { _toast("Paste a model URL, ID, version ID, or SHA-256 hash.", "error"); return; }
+  var params = new URLSearchParams();
+  if (/^[A-Fa-f0-9]{64}$/.test(v)) {
+    params.set("hash", v);
+  } else if (/^[A-Fa-f0-9]{10,12}$/.test(v) && /[A-Fa-f]/.test(v)) {
+    params.set("hash", v);
+  } else if (/^\d+$/.test(v)) {
+    params.set("version_id", v);
+  } else {
+    params.set("model", v);
+  }
+  if (fieldEl) fieldEl.disabled = true;
+  _api("/civitai/lookup?" + params.toString()).then(function(r) {
+    if (r.kind === "model") {
+      openDetail(r.data);
+    } else if (r.kind === "version") {
+      var d = r.data;
+      var m = d.model || {};
+      openDetail({
+        id: d.modelId || m.id || 0,
+        name: m.name || d.name || "(version " + d.id + ")",
+        type: m.type || d.type || "?",
+        description: m.description || d.description || "",
+        creator: m.creator || {},
+        stats: m.stats || {},
+        modelVersions: [d],
+      });
+    } else {
+      _toast("Lookup returned unexpected result", "error");
+    }
+  }).catch(function(e) {
+    if (params.get("version_id")) {
+      var p2 = new URLSearchParams({ model_id: params.get("version_id") });
+      _api("/civitai/lookup?" + p2.toString()).then(function(r) {
+        if (r.kind === "model") openDetail(r.data);
+        else _toast("Lookup failed", "error");
+      }).catch(function(e2) { _toast("Not found: " + e2.message, "error"); });
+    } else {
+      _toast("Not found: " + e.message, "error");
+    }
+  }).then(function() { if (fieldEl) fieldEl.disabled = false; });
 }
 
 function _card(m) {
-  const imgUrl = m.images?.[0]?.url || m.images?.[0]?.url || "";
-  const card = el("div", { class: "cvt-card" });
-  const thumb = el("div", { class: "thumb", style: { background: `url(${imgUrl}) center/cover`, aspectRatio: "3/4" } });
-  if (!imgUrl) thumb.style.background = "linear-gradient(135deg,#1a1a1a,#0f0f0f)";
-  if (m.nsfw) thumb.classList.add("cvt-nsfw-blur");
+  var imgs = m.images || (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].images) || [];
+  var firstImg = imgs[0];
+  var imgNsfw = firstImg && typeof firstImg === "object" && (firstImg.nsfw || (firstImg.nsfwLevel || 0) > 1);
+  var isNsfw = m.nsfw || (m.nsfwLevel || 0) > 1 || imgNsfw;
+  var imgUrl = firstImg ? (typeof firstImg === "string" ? firstImg : firstImg.url || "") : "";
+  var card = el("div", { class: "cvt-card" });
+  var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)" } });
+  if (imgUrl) {
+    var img = el("img", { src: _thumbUrl(imgUrl, 400), style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.outerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;opacity:.3">\uD83D\uDDBC</div>'; } });
+    thumb.appendChild(img);
+  }
+  if (isNsfw && window.__nsfwBlurEnabled !== false) {
+    thumb.style.filter = "blur(20px) grayscale(0.5)";
+    thumb.style.willChange = "filter";
+    thumb.addEventListener("mouseenter", function() { this.style.filter = "none"; });
+    thumb.addEventListener("mouseleave", function() { this.style.filter = "blur(20px) grayscale(0.5)"; });
+  }
   card.appendChild(thumb);
-  const body = el("div", { class: "body" },
+  card.appendChild(el("div", { class: "body" },
     el("div", { class: "title" }, m.name || "Untitled"),
     el("div", { class: "meta" },
+      el("span", {}, (m.creator && m.creator.username) || "?"),
       el("span", {}, m.type || "?"),
-      el("span", {}, `⬇ ${_fmtNum(m.downloadCount||0)}`),
-      m.nsfw ? el("span", { class: "cvt-badge nsfw" }, "NSFW") : null,
-    ),
-  );
-  card.appendChild(body);
-  card.onclick = () => openDetail(m);
+      isNsfw ? el("span", { class: "cvt-badge nsfw" }, "NSFW") : null)));
+  card.onclick = function() { openDetail(m); };
   return card;
 }
 
 // ── Detail Modal ────────────────────────────────────────────────────
-async function openDetail(model) {
+var _curDetailId = 0;
+function openDetail(model) {
   closeModal();
-  const bg = el("div", { class: "cvt-modal-bg" });
-  const wrap = el("div", { class: "cvt-modal-wrap" });
-  const close = el("button", { class: "close" }, "×");
-  const modal = el("div", { class: "cvt-modal" });
-  wrap.append(close, modal); bg.appendChild(wrap);
+  var mid = ++_curDetailId;
+  var bg = el("div", { class: "cvt-modal-bg" });
+  var wrap = el("div", { class: "cvt-modal-wrap" });
+  var closeBtn = el("button", { class: "close" }, "\u00D7");
+  var modal = el("div", { class: "cvt-modal" });
+  wrap.appendChild(closeBtn); wrap.appendChild(modal); bg.appendChild(wrap);
   S.modal = bg; document.body.appendChild(bg);
-  close.onclick = closeModal; bg.onclick = e => { if (e.target === bg) closeModal(); };
 
-  const left = el("div", { class: "left" });
-  const right = el("div", { class: "right" });
-  modal.append(left, right);
+  var closer = function() { if (_curDetailId === mid) closeModal(); };
+  closeBtn.onclick = closer;
+  bg.onclick = function(e) { if (e.target === bg) closer(); };
 
-  left.append(el("h2", {}, model.name || ""));
-  left.append(el("div", { class: "sub" }, `by ${model.creator?.username || "?"} · ${model.type || ""}`));
-  const gallery = el("div", { class: "gallery", id: "cvt-gallery" });
-  gallery.innerHTML = `<div class="cvt-spinner"></div>`;
+  var left = el("div", { class: "left" });
+  var right = el("div", { class: "right" });
+  modal.appendChild(left); modal.appendChild(right);
+
+  left.appendChild(el("h2", {}, model.name || ""));
+  left.appendChild(el("div", { class: "sub" }, "by " + (model.creator ? model.creator.username || "?" : "?") + " \u00B7 " + (model.type || "")));
+  var gallery = el("div", { class: "gallery" });
+  gallery.innerHTML = '<div class="cvt-spinner"></div>';
   left.appendChild(gallery);
+  right.innerHTML = '<div class="cvt-spinner"></div>';
 
-  right.innerHTML = `<div class="cvt-spinner"></div>`;
-
-  try {
-    const vd = await _api(`/civitai/model-versions?id=${model.id}`);
-    const versions = vd.items || [];
-    if (!versions.length) { right.innerHTML = `<div class="cvt-empty">No versions</div>`; return; }
-    const v = versions[0];
-    _renderVersion(v, right, gallery, model);
-  } catch (e) { right.innerHTML = `<div class="cvt-empty">Error: ${e.message}</div>`; }
+  // Fetch full model data if incomplete
+  var versions = model.modelVersions || [];
+  var hasFull = versions.length && versions[0].images && versions[0].files;
+  if (!hasFull && model.id) {
+    _api("/civitai/model/" + model.id).then(function(data) {
+      if (_curDetailId !== mid) return;
+      model.description = model.description || data.description;
+      model.creator = model.creator || data.creator;
+      model.stats = model.stats || data.stats;
+      versions = data.modelVersions || [];
+      _buildDetailModal(right, gallery, model, versions, mid);
+    }).catch(function(e) {
+      right.innerHTML = '<div class="cvt-empty">Error: ' + e.message + '</div>';
+    });
+  } else {
+    _buildDetailModal(right, gallery, model, versions, mid);
+  }
 }
 
-function _renderVersion(v, right, gallery, model) {
+function _buildDetailModal(right, gallery, model, versions, mid) {
   right.innerHTML = "";
-  right.append(el("div", { style: { fontSize:"14px", fontWeight:600, marginBottom:"6px" } }, v.name || "Version"),
-    el("div", { class: "sub" }, v.model?.type ? `Base: ${v.model.type}` : ""));
+  if (!versions.length) { right.innerHTML = '<div class="cvt-empty">No versions</div>'; return; }
+  var curVersion = versions[0];
 
-  // Files
-  const files = (v.files || []).map((f, i) => {
-    const row = el("div", { class: "f" },
-      el("span", {}, `${f.name || `file_${i}`}${f.primary?" ★":""}`),
-      el("span", { style: { display:"flex", gap:"4px", alignItems:"center" } },
-        el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes((f.sizeKB||0)*1024)),
-        el("button", { class: "cvt-btn ghost", style: { padding:"2px 8px", fontSize:"10px" }, dataset: { url: f.downloadUrl, name: f.name } }, "⬇")));
-    return row;
-  });
-  const fl = el("div", { class: "cvt-files-list" });
-  files.forEach(f => fl.appendChild(f));
-  right.append(el("label", {}, "Files"), fl);
-
-  // Trigger words
-  if (v.trainedWords?.length) {
-    const tw = el("div", { style: { margin:"8px 0", fontSize:"11px" } },
-      el("div", { style: { color:"var(--civ-text-mute)", marginBottom:"4px", fontSize:"10px", textTransform:"uppercase", fontWeight:600 } }, "Trigger Words:"));
-    v.trainedWords.forEach(t => tw.appendChild(el("code", { style: { background:"#333", padding:"2px 6px", borderRadius:"3px", margin:"2px", fontSize:"11px" } }, t)));
-    right.appendChild(tw);
+  // ---- Stats (likes + downloads) above version ----
+  if (model.stats) {
+    var statsRow = el("div", { style: { display:"flex", gap:"10px", fontSize:"11px", color:"var(--civ-text-dim)", marginBottom:"6px" } });
+    if (model.stats.thumbsUpCount != null) statsRow.appendChild(el("span", {}, "\u2764 " + _fmtNum(model.stats.thumbsUpCount)));
+    if (model.stats.downloadCount != null) statsRow.appendChild(el("span", {}, "\u2B07 " + _fmtNum(model.stats.downloadCount)));
+    if (statsRow.children.length) right.appendChild(statsRow);
   }
 
-  // Description
-  if (v.description) {
-    const desc = el("div", { class: "cvt-files-list", style: { maxHeight:"80px", padding:"8px 10px", marginTop:"8px", fontSize:"11.5px", lineHeight:1.5 } });
-    desc.innerHTML = v.description;
-    right.appendChild(desc);
-  }
+  // ---- Version selector ----
+  var vSel = el("select");
+  versions.forEach(function(v) { vSel.appendChild(el("option", { value: v.id }, v.name || "#" + v.id)); });
+  right.appendChild(el("label", {}, "Version"));
+  right.appendChild(vSel);
 
-  // Download options
-  right.append(el("label", { style: { marginTop:"10px" } }, "Subfolder"));
-  const subRow = el("div", { class: "cvt-row", style: { alignItems:"center" } });
-  const subIn = el("input", { type: "text", placeholder: "optional", style: { flex:1 } });
-  const autoCb = el("input", { type: "checkbox", id: "cvt-autofold" });
-  subRow.append(subIn, el("label", { style: { display:"flex", alignItems:"center", gap:"4px", fontSize:"11px", whiteSpace:"nowrap" } }, autoCb, " auto"));
-  right.append(subRow);
-  const dlBtn = el("button", { class: "cvt-btn", style: { width:"100%", marginTop:"8px", padding:"10px 0" } }, "⬇ Download All");
-  right.appendChild(dlBtn);
-  dlBtn.onclick = () => {
-    const sf = subIn.value || (autoCb.checked ? (v.name||"").replace(/[^a-zA-Z0-9_-]/g,"_").toLowerCase() : "");
-    right.querySelectorAll(".cvt-files-list .f button").forEach(b => {
-      const url = b.dataset.url; const name = b.dataset.name;
-      if (url) _startDl(url, name, sf);
+  // ---- File selector ----
+  right.appendChild(el("label", {}, "File"));
+  var fSel = el("select", { size: "1" });
+  right.appendChild(fSel);
+
+  // ---- Folder selector ----
+  right.appendChild(el("label", {}, "Folder"));
+  var folderSel = el("select");
+  folderSel.appendChild(el("option", { value: "auto" }, "Auto \u2192 " + _guessFolder(model.type)));
+  _api("/civitai/folders").then(function(r) {
+    (r.folders || []).forEach(function(f) { folderSel.appendChild(el("option", { value: f }, f)); });
+  }).catch(function() {});
+  right.appendChild(folderSel);
+
+  // ---- Subfolder + auto checkbox ----
+  right.appendChild(el("label", {}, "Subfolder"));
+  var subIn = el("input", { type: "text", placeholder: "subfolder\u2026" });
+  var autoModelName = _sanitizeModelName(model.name || "", 50);
+  var autoCb = el("input", { type: "checkbox", checked: true });
+  subIn.value = autoModelName;
+  subIn.style.opacity = "0.5";
+  autoCb.onchange = function() {
+    if (autoCb.checked) { subIn.value = autoModelName; subIn.style.opacity = "0.5"; subIn.readOnly = true; }
+    else { subIn.value = ""; subIn.style.opacity = "1"; subIn.readOnly = false; subIn.focus(); }
+  };
+  var subRow = el("div", { class: "cvt-row", style: { alignItems:"center" } });
+  subRow.appendChild(subIn);
+  subRow.appendChild(el("label", { style: { display:"inline-flex", alignItems:"center", gap:"2px", fontSize:"9px", color:"var(--civ-text-mute)", flexShrink:0 } }, autoCb, " Auto"));
+  right.appendChild(subRow);
+
+  // ---- Checkboxes row ----
+  var checksRow = el("div", { style: { display:"flex", gap:"6px", flexWrap:"wrap", marginTop:"4px", fontSize:"9.5px" } });
+  var overwriteLbl = el("label", { class: "check", style: { gap:"2px", margin:0 } }, el("input", { type: "checkbox" }), " Re-download");
+  var fnameLbl = el("label", { style: { gap:"2px", margin:0, fontSize:"9.5px", display:"flex", alignItems:"center" } }, "Rename:",
+    el("input", { type: "text", placeholder: "custom name", style: { width:"90px", marginLeft:"3px", fontSize:"9px", padding:"1px 3px" } }));
+  var metaCb = el("input", { type: "checkbox" });
+  var prevCb = el("input", { type: "checkbox" });
+  var metaLbl = el("label", { class: "check", style: { gap:"2px", margin:0 } }, metaCb, " Metadata");
+  var prevLbl = el("label", { class: "check", style: { gap:"2px", margin:0 } }, prevCb, " Preview");
+  checksRow.appendChild(overwriteLbl); checksRow.appendChild(fnameLbl); checksRow.appendChild(metaLbl); checksRow.appendChild(prevLbl);
+  right.appendChild(checksRow);
+
+  // ---- Buttons row ----
+  var btnRow = el("div", { style: { display:"flex", gap:"4px", marginTop:"4px" } });
+    var dlBtn = el("button", { class: "cvt-btn cvt-btn-xs", style: { flex:"1" } },
+    el("span", { class: "emoji-btn" }, "\u2B07"), " Download");
+  var metaOnlyBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { flex:"1" } },
+    el("span", { class: "emoji-btn" }, "\uD83D\uDCC4"), " Metadata");
+  btnRow.appendChild(dlBtn); btnRow.appendChild(metaOnlyBtn);
+  right.appendChild(btnRow);
+
+  var statusLine = el("div", { style: { fontSize:"9.5px", color:"var(--civ-text-dim)", marginTop:"3px" } });
+  right.appendChild(statusLine);
+
+  // ---- Files list ----
+  right.appendChild(el("label", { style: { marginTop:"6px" } }, "Files"));
+  var filesList = el("div", { class: "cvt-files-list" });
+  right.appendChild(filesList);
+
+  // ---- Description pane (collapsible) ----
+  var desc = el("div", { class: "cvt-desc", style: { flexShrink:0, flex:"none", maxHeight:"none" } });
+  var descText = model.description || "";
+  desc.innerHTML = descText || "<i>(no description)</i>";
+  right.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
+  right.appendChild(desc);
+
+  function _renderVersion(v) {
+    curVersion = v;
+    // Gallery
+    gallery.innerHTML = "";
+    var gFrag = document.createDocumentFragment();
+    var nsfwVal = S.civitai.nsfw;
+    var hasPG13 = nsfwVal && nsfwVal.indexOf("Soft") >= 0;
+    var hasR = nsfwVal && nsfwVal.indexOf("Mature") >= 0;
+    var hasX = nsfwVal && nsfwVal.indexOf("X") >= 0;
+    var hasXXX = nsfwVal && nsfwVal.indexOf("XXX") >= 0;
+    var imgs = (v.images || []).filter(function(im) {
+      if (!nsfwVal) return true;
+      var lvl = im.nsfwLevel;
+      if (lvl == null) return true;
+      var n = Number(lvl);
+      if (!isNaN(n)) {
+        if (n === 0) return false;
+        if (n === 1) return hasPG13;
+        if (n === 2) return hasR;
+        if (n >= 3) return hasX || hasXXX;
+        return true;
+      }
+      var s = String(lvl);
+      if (s === "None") return false;
+      if (s === "Soft") return hasPG13;
+      if (s === "Mature") return hasR;
+      if (s === "X" || s === "XXX") return hasX || hasXXX;
+      return true;
     });
+    imgs.forEach(function(im) {
+      var nsfw = ((im.nsfwLevel || 0) > 1 || model.nsfw) && window.__nsfwBlurEnabled !== false;
+      var imgEl = el("img", {
+        src: _thumbUrl(im.url, 500), loading: "lazy", decoding: "async",
+        class: nsfw ? "nsfw" : "",
+        style: { cursor: "pointer" }
+      });
+      if (nsfw) {
+        imgEl.addEventListener("mouseenter", function() { this.style.filter = "none"; });
+        imgEl.addEventListener("mouseleave", function() { this.style.filter = ""; });
+      }
+      imgEl.onclick = function(e) { e.stopPropagation(); openLightbox(im, model); };
+      imgEl.title = "Click to view full image + generation params";
+      gFrag.appendChild(imgEl);
+    });
+    gallery.appendChild(gFrag);
+
+    // Files dropdown
+    fSel.innerHTML = "";
+    var vfiles = v.files || [];
+    function _fillFilename() {
+      var idx = parseInt(fSel.value || "0", 10);
+      var f = vfiles[idx] || {};
+      var fnameIn = fnameLbl.querySelector("input");
+      if (fnameIn && !fnameIn.value.trim()) {
+        fnameIn.value = f.name || "";
+      }
+    }
+    vfiles.forEach(function(f, idx) {
+      fSel.appendChild(el("option", { value: idx },
+        (f.name || "") + " \u2014 " + (f.metadata && f.metadata.format || "?") + " " + (f.metadata && f.metadata.fp || "") + " " + (f.metadata && f.metadata.size || "") + " (" + _fmtBytes((f.sizeKB||0)*1024) + ")" + (f.primary ? " \u2605" : "")));
+      if (f.primary) fSel.value = idx;
+    });
+    fSel.onchange = _fillFilename;
+    _fillFilename();
+
+    // Base model badge
+    var baseModel = v.baseModel || model.baseModel || (v.metadata && v.metadata.baseModel) || "";
+
+    // Files list with SHA256 + copy + base model
+    filesList.innerHTML = "";
+    vfiles.forEach(function(f) {
+      var hashStr = (f.hashes && f.hashes.SHA256) || "";
+      var hashShort = hashStr.slice(0, 8) || "\u2014";
+      var fileRow = el("div", { class: "f" });
+      fileRow.appendChild(el("span", {}, (f.name||"") + (f.primary ? " \u2605" : "")));
+      var rightSpan = el("span", { style: { display:"inline-flex", alignItems:"center", gap:"4px" } });
+      if (baseModel) rightSpan.appendChild(el("span", { class: "cvt-badge", style: { fontSize:"9px", padding:"1px 5px", textTransform:"none" } }, baseModel));
+      rightSpan.appendChild(document.createTextNode(_fmtBytes((f.sizeKB||0)*1024)));
+      rightSpan.appendChild(el("span", { style: { opacity:".4" } }, "|"));
+      var hashEl = el("span", { style: { fontFamily:"monospace", fontSize:"9.5px", cursor:"pointer", borderBottom:"1px dotted rgba(255,255,255,.15)" }, title: "Click to copy SHA256" }, hashShort);
+      hashEl.onclick = function(e) {
+        e.stopPropagation();
+        navigator.clipboard.writeText(hashStr).then(function() {
+          _toast("SHA256 copied", "ok");
+        }).catch(function() {});
+      };
+      rightSpan.appendChild(hashEl);
+      fileRow.appendChild(rightSpan);
+      filesList.appendChild(fileRow);
+    });
+
+    // Update subfolder auto-name from the file name (no extension)
+    var primaryFile = vfiles.find(function(f) { return f.primary; }) || vfiles[0] || {};
+    autoModelName = primaryFile.name ? _sanitizeModelName(primaryFile.name.replace(/\.[^.]+$/, ""), 80) : _sanitizeModelName(v.name || model.name || "", 50);
+    if (autoCb.checked) { subIn.value = autoModelName; }
+  }
+
+  vSel.onchange = function() {
+    var found = null;
+    for (var i = 0; i < versions.length; i++) {
+      if (String(versions[i].id) === vSel.value) { found = versions[i]; break; }
+    }
+    if (found) _renderVersion(found);
   };
 
-  // Images
-  _api(`/civitai/images?versionId=${v.id}&page=1`).then(d => {
-    gallery.innerHTML = "";
-    const items = d.items || [];
-    if (!items.length) { gallery.innerHTML = `<div class="cvt-empty" style="grid-column:1/-1">No images</div>`; return; }
-    items.forEach(img => {
-      const wrapper = el("div", { style: { position:"relative", cursor:"pointer" } });
-      const nsfw = img.nsfw || img.nsfwLevel > 1;
-      const imgEl = el("img", { src: img.url, class: nsfw ? "cvt-nsfw-blur" : "", loading: "lazy" });
-      wrapper.appendChild(imgEl);
-      wrapper.onclick = () => openLightbox(img, model);
-      gallery.appendChild(wrapper);
+  // ---- Submit download ----
+  function _submitDownload(metadataOnly) {
+    var btn = metadataOnly ? metaOnlyBtn : dlBtn;
+    btn.disabled = true;
+    statusLine.textContent = metadataOnly ? "Fetching metadata\u2026" : "Starting download\u2026";
+    var fIdx = parseInt(fSel.value || "0", 10);
+    var fls = curVersion.files || [];
+    var file = fls[fIdx] || {};
+    var body = {
+      model_version_id: curVersion.id,
+      save_as: folderSel.value === "auto" ? _guessFolder(model.type) : folderSel.value,
+      filename: fnameLbl.querySelector("input").value.trim(),
+      overwrite: overwriteLbl.querySelector("input").checked,
+      format: file.metadata && file.metadata.format || null,
+      fp: file.metadata && file.metadata.fp || null,
+      size: file.metadata && file.metadata.size || null,
+      save_metadata: metaCb.checked,
+      save_preview: prevCb.checked,
+      metadata_only: metadataOnly,
+      subfolder: subIn.value.trim(),
+    };
+    _api("/civitai/download", { method:"POST", body:JSON.stringify(body) }).then(function(job) {
+      statusLine.innerHTML = "";
+      statusLine.appendChild(document.createTextNode((metadataOnly ? "Metadata job queued: " : "Queued: ")));
+      statusLine.appendChild(el("b", {}, job.id));
+      statusLine.appendChild(document.createTextNode(" \u2014 open "));
+      var dlLink = el("a", { href: "#", style: { color:"var(--civ-accent-dim)", cursor:"pointer" } }, "Downloads");
+      dlLink.onclick = function(e) { e.preventDefault(); if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "downloads" })); };
+      statusLine.appendChild(dlLink);
+      statusLine.appendChild(document.createTextNode(" to monitor."));
+      // Mini progress bar
+      var miniBar = el("div", { style: { width:"100%", height:"3px", background:"rgba(255,255,255,.06)", borderRadius:"2px", marginTop:"4px", overflow:"hidden" } });
+      var miniFill = el("div", { style: { width:"30%", height:"100%", background:"linear-gradient(90deg,rgba(255,255,255,.3),rgba(255,255,255,.6),rgba(255,255,255,.3))", backgroundSize:"200% 100%", borderRadius:"2px", animation:"cvt-bar 1.4s linear infinite" } });
+      miniBar.appendChild(miniFill);
+      statusLine.appendChild(miniBar);
+      _toast(metadataOnly ? "Metadata queued" : "Queued: " + (job.filename || job.name || "download"), "ok");
+    }).catch(function(e) {
+      statusLine.innerHTML = "";
+      statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
+      _toast("Download error: " + e.message, "error", 5000);
+    }).then(function() { btn.disabled = false; });
+  }
+
+  dlBtn.onclick = function() { _submitDownload(false); };
+  metaOnlyBtn.onclick = function() {
+    if (!metaCb.checked && !prevCb.checked) {
+      statusLine.innerHTML = "";
+      statusLine.appendChild(el("span", { style: { color:"#e88" } }, "Enable at least one of metadata sidecar / preview image."));
+      return;
+    }
+    _submitDownload(true);
+  };
+
+  _renderVersion(curVersion);
+}
+
+// ── Local Model Detail Modal ────────────────────────────────────────
+function openLocalDetail(m, grid, filterIn) {
+  closeModal();
+  var mid = ++_curDetailId;
+  var bg = el("div", { class: "cvt-modal-bg" });
+  var wrap = el("div", { class: "cvt-modal-wrap" });
+  var closeBtn = el("button", { class: "close" }, "\u00D7");
+  var modal = el("div", { class: "cvt-modal" });
+  wrap.appendChild(closeBtn); wrap.appendChild(modal); bg.appendChild(wrap);
+  S.modal = bg; document.body.appendChild(bg);
+
+  var closer = function() { if (_curDetailId === mid) closeModal(); };
+  closeBtn.onclick = closer;
+  bg.onclick = function(e) { if (e.target === bg) closer(); };
+
+  var left = el("div", { class: "left" });
+  var right = el("div", { class: "right" });
+  modal.appendChild(left); modal.appendChild(right);
+
+  // Left: model info + preview
+  left.appendChild(el("h2", {}, m.name || ""));
+
+  var isNsfw = (m.nsfw || (m.nsfwLevel || 0) > 1) && window.__nsfwBlurEnabled !== false;
+
+  // Gallery of all local preview images
+  var previewEl = el("img", { style: { width:"100%", aspectRatio:"3/4", objectFit:"cover", display:"block", borderRadius:"var(--civ-radius-sm)", background:"#141414", marginBottom:"6px" } });
+  if (isNsfw) {
+    previewEl.style.filter = "blur(20px) grayscale(0.5)";
+    previewEl.addEventListener("mouseenter", function() { this.style.filter = "none"; });
+    previewEl.addEventListener("mouseleave", function() { this.style.filter = "blur(20px) grayscale(0.5)"; });
+  }
+  left.appendChild(previewEl);
+  var gal = el("div", { style: { display:"flex", gap:"6px", overflowX:"auto", paddingBottom:"4px", maxWidth:"100%" } });
+  left.appendChild(gal);
+
+  // Fetch all previews from server
+  if (m.path) {
+    _api("/civitai/local-previews?path=" + encodeURIComponent(m.path)).then(function(r) {
+      var imgs = r.images || [];
+      if (!imgs.length && m.preview) {
+        imgs = [{ url: "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=300", prompt: "", negativePrompt: "" }];
+      }
+      if (imgs.length) {
+        var firstUrl = (typeof imgs[0] === "object" ? imgs[0].url : imgs[0]) || "";
+        if (firstUrl) previewEl.src = firstUrl;
+      }
+      imgs.forEach(function(im) {
+        var imgSrc = (typeof im === "object") ? im.url : im;
+        var prompt = (typeof im === "object") ? (im.prompt || "") : "";
+        var negPrompt = (typeof im === "object") ? (im.negativePrompt || "") : "";
+        var meta = (typeof im === "object") ? im : {};
+        var thumb = el("img", {
+          src: imgSrc,
+          style: { height:"70px", borderRadius:"var(--civ-radius-sm)", cursor:"pointer", flexShrink:0, objectFit:"cover", border:"2px solid transparent" },
+          loading: "lazy"
+        });
+        if (isNsfw) {
+          thumb.style.filter = "blur(8px) grayscale(0.5)";
+          thumb.addEventListener("mouseenter", function() { this.style.filter = "none"; });
+          thumb.addEventListener("mouseleave", function() { this.style.filter = "blur(8px) grayscale(0.5)"; });
+        }
+        thumb.onmouseenter = function() {
+          previewEl.src = imgSrc;
+          var pArea = left.querySelector(".cvt-prompt-area");
+          if (!pArea) {
+            pArea = el("div", { class: "cvt-prompt-area", style: { marginTop:"4px", fontSize:"11px", lineHeight:"1.5", display:"flex", flexDirection:"column", gap:"4px" } });
+            left.appendChild(pArea);
+          }
+          pArea.innerHTML = "";
+          if (prompt) {
+            pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
+              el("label", {}, "Prompt"),
+              el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(prompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"100px", overflowY:"auto", wordBreak:"break-word" } }, prompt));
+          }
+          if (negPrompt) {
+            pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } },
+              el("label", {}, "Negative Prompt"),
+              el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(negPrompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"80px", overflowY:"auto", wordBreak:"break-word" } }, negPrompt));
+          }
+          var metaParts = [];
+          if (meta.width && meta.height) metaParts.push(meta.width + "x" + meta.height);
+          if (meta.seed) metaParts.push("S:" + meta.seed);
+          if (metaParts.length) {
+            pArea.appendChild(el("div", { style: { fontSize:"9px", opacity:".6", marginTop:"2px" } }, metaParts.join(" \u00B7 ")));
+          }
+        };
+        gal.appendChild(thumb);
+      });
     });
-  });
+  } else if (m.preview) {
+    previewEl.src = "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=600";
+    var thumb = el("img", {
+      src: previewEl.src,
+      style: { height:"70px", borderRadius:"var(--civ-radius-sm)", flexShrink:0, objectFit:"cover" },
+      loading: "lazy"
+    });
+    gal.appendChild(thumb);
+  }
+
+  // Right: details
+  var rightContent = el("div", { style: { display:"flex", flexDirection:"column", gap:"6px" } });
+  right.appendChild(rightContent);
+
+  // Basic info
+  rightContent.appendChild(el("label", {}, "Details"));
+  var infoList = el("div", { style: { fontSize:"11px", color:"var(--civ-text-dim)", lineHeight:"1.6" } });
+  infoList.appendChild(el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Type: "), m.type || "?"));
+  infoList.appendChild(el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Size: "), m.size || "?"));
+  if (m.base_model) infoList.appendChild(el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Base Model: "), m.base_model));
+  infoList.appendChild(el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Location: "), (m.folder || m.type || "?") + "/"));
+  if (m.creator) infoList.appendChild(el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Creator: "), m.creator));
+  rightContent.appendChild(infoList);
+
+  // Hash and Civitai lookup
+  var civSection = el("div", { style: { marginTop:"6px" } });
+  rightContent.appendChild(civSection);
+  civSection.appendChild(el("label", {}, "Civitai Lookup"));
+  var civStatus = el("div", { style: { fontSize:"10px", color:"var(--civ-text-dim)", padding:"6px 0" } }, "\u23F3 Looking up hash\u2026");
+  civSection.appendChild(civStatus);
+
+  // Direct link from metadata
+  if (m.model_id) {
+    var directLink = el("a", { href: "https://civitai.com/models/" + m.model_id, target: "_blank", style: { display:"inline-block", fontSize:"10px", color:"var(--civ-accent-dim)", marginBottom:"4px" } }, "\uD83C\uDF10 View on Civitai");
+    civSection.insertBefore(directLink, civStatus);
+  }
+
+  if (m.hash) {
+    _api("/civitai/lookup?hash=" + encodeURIComponent(m.hash)).then(function(r) {
+      if (_curDetailId !== mid) return;
+      if (r.kind === "version" && r.data) {
+        var d = r.data;
+        var modelData = d.model || {};
+        var creator = modelData.creator || {};
+        var creatorName = (typeof creator === "object") ? (creator.username || creator.name || "") : creator;
+        civStatus.innerHTML = "";
+        civStatus.appendChild(el("div", { style: { fontSize:"11px", lineHeight:"1.5" } },
+          el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Model: "), modelData.name || d.name || ""),
+          el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Creator: "), creatorName || "?"),
+          el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Type: "), modelData.type || d.type || "?"),
+          el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Base: "), d.baseModel || modelData.baseModel || "?"),
+          el("div", {}, el("strong", { style: { color:"var(--civ-text-mute)" } }, "Version: "), d.name || "?")));
+        var civBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { marginTop:"6px" } }, "\uD83C\uDF10 View on Civitai");
+        civBtn.onclick = function() { window.open("https://civitai.com/models/" + (modelData.id || ""), "_blank"); };
+        civStatus.appendChild(civBtn);
+
+        // Gallery of all Civitai images with prompts
+        if (d.images && d.images.length) {
+          var galLabel = el("label", { style: { marginTop:"8px", display:"block" } }, "Gallery");
+          rightContent.appendChild(galLabel);
+          var gal = el("div", { style: { display:"flex", gap:"6px", overflowX:"auto", paddingBottom:"4px", maxWidth:"100%" } });
+          d.images.forEach(function(im) {
+            var imgSrc = (typeof im === "object") ? im.url : im;
+            var meta = (typeof im === "object") ? (im.meta || {}) : {};
+            var prompt = meta.prompt || "";
+            var negPrompt = meta.negativePrompt || "";
+            var thumb = el("img", {
+              src: _thumbUrl(imgSrc, 300), loading:"lazy",
+              style: { height:"100px", borderRadius:"var(--civ-radius-sm)", cursor:"pointer", flexShrink:0, objectFit:"cover" },
+              title: prompt ? prompt.slice(0, 120) : ""
+            });
+            thumb.onmouseenter = function() {
+              if (previewEl) previewEl.src = _thumbUrl(imgSrc, 500);
+              var pArea = rightContent.querySelector(".cvt-prompt-area");
+              if (!pArea) {
+                pArea = el("div", { class: "cvt-prompt-area", style: { marginTop:"6px", fontSize:"11px", lineHeight:"1.5", display:"flex", flexDirection:"column", gap:"4px" } });
+                rightContent.appendChild(pArea);
+              }
+              pArea.innerHTML = "";
+              if (prompt) {
+                pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
+                  el("label", {}, "Prompt"),
+                  el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(prompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
+                pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"120px", overflowY:"auto", wordBreak:"break-word" } }, prompt));
+              }
+              if (negPrompt) {
+                pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } },
+                  el("label", {}, "Negative Prompt"),
+                  el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(negPrompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
+                pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"100px", overflowY:"auto", wordBreak:"break-word" } }, negPrompt));
+              }
+            };
+            gal.appendChild(thumb);
+          });
+          rightContent.appendChild(gal);
+
+          // Show model-level description if available
+          var fullDesc = modelData.description || d.description || "";
+          if (fullDesc && fullDesc !== m.description) {
+            rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
+            var descEl = el("div", { class: "cvt-desc", style: { minHeight:"30px", maxHeight:"120px" } });
+            descEl.textContent = fullDesc;
+            rightContent.appendChild(descEl);
+          }
+        }
+      } else {
+        civStatus.textContent = "\u26A0 Not found on Civitai";
+      }
+    }).catch(function(e) {
+      if (_curDetailId !== mid) return;
+      civStatus.textContent = "\u26A0 Lookup failed: " + (e.message || "error");
+    });
+  } else {
+    civStatus.textContent = "\u26A0 No hash available \u2014 use Refresh to scan files";
+  }
+
+  // Tags
+  if (m.tags && m.tags.length) {
+    rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "Tags"));
+    var tagsContainer = el("div", { class: "cvt-local-tags" });
+    m.tags.slice(0, 8).forEach(function(tag) {
+      tagsContainer.appendChild(el("span", { class: "cvt-tag" }, "#" + tag));
+    });
+    rightContent.appendChild(tagsContainer);
+  }
+
+  // Description from metadata
+  if (m.description) {
+    rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
+    var desc = el("div", { class: "cvt-desc", style: { minHeight:"40px", maxHeight:"150px" } });
+    desc.textContent = m.description;
+    rightContent.appendChild(desc);
+  }
+
+  // Actions
+  var actions = el("div", { style: { display:"flex", gap:"6px", marginTop:"8px", flexWrap:"wrap" } });
+  var cpBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { flex:"1" } }, "\uD83D\uDCCB Copy path");
+  cpBtn.onclick = function() {
+    navigator.clipboard.writeText(m.path || "").then(function() { _toast("Copied!"); }).catch(function() {});
+  };
+  actions.appendChild(cpBtn);
+
+  var delBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { flex:"1" } }, "\u2715 Delete");
+  delBtn.onclick = function() {
+    if (!confirm("Delete \"" + (m.name || "") + "\"?")) return;
+    _api("/civitai/delete-model", { method:"POST", body:JSON.stringify({path:m.path}) }).then(function() {
+      _toast("Deleted: " + m.name, "ok");
+      S.local.models = S.local.models.filter(function(x) { return x.path !== m.path; });
+      closer();
+      if (grid) _renderLocalGrid(grid, filterIn);
+    }).catch(function(e) { _toast("Delete failed: " + e.message, "error"); });
+  };
+  actions.appendChild(delBtn);
+  rightContent.appendChild(actions);
+}
+
+function _sanitizeModelName(name, maxLen) {
+  maxLen = maxLen || 50;
+  return (name || "").replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").substring(0, maxLen);
+}
+
+function _guessFolder(type) {
+  return ({
+    Checkpoint: "checkpoints", LORA: "loras", LoCon: "loras", DoRA: "loras",
+    VAE: "vae", Controlnet: "controlnet",
+    TextualInversion: "embeddings", Hypernetwork: "hypernetworks",
+    Upscaler: "upscale_models", MotionModule: "animatediff_models",
+  })[type] || "other";
 }
 
 // ── Lightbox ────────────────────────────────────────────────────────
 function openLightbox(img, model) {
   closeLightbox();
-  const bg = el("div", { class: "cvt-lightbox-bg" });
-  const content = el("div", { style: { display:"flex", alignItems:"flex-start", maxWidth:"96vw", maxHeight:"90vh" } });
-  const iEl = el("img", { src: img.url, style: { maxWidth:"65vw", maxHeight:"88vh", objectFit:"contain", borderRadius:"var(--civ-radius)", boxShadow:"0 20px 60px rgba(0,0,0,.7)" } });
-  content.appendChild(iEl);
+  var bg = el("div", { class: "cvt-lightbox-bg" });
+  var content = el("div", { style: { display:"flex", gap:"20px", alignItems:"flex-start", maxWidth:"96vw", maxHeight:"90vh" } });
 
-  const meta = img.meta || {};
-  const panel = el("div", { class: "cvt-gen-panel" });
-  panel.append(el("div", { class: "cvt-gen-heading" }, "Generation Parameters"));
-
-  const fields = [
-    ["prompt", "Positive Prompt", true], ["negativePrompt", "Negative Prompt", true],
-    ["Model", "Model"], ["seed", "Seed"], ["steps", "Steps"],
-    ["cfgScale", "CFG"], ["sampler", "Sampler"], ["scheduler", "Scheduler"],
-    ["Size", "Size"], ["Denoising strength", "Denoising"],
-  ];
-  fields.forEach(([k, t, isPrompt]) => {
-    const val = meta[k];
-    if (!val) return;
-    if (isPrompt) {
-      const box = el("div", { class: "cvt-prompt-box" });
-      box.append(el("div", { class: "cvt-gen-label" }, t),
-        el("div", { class: "cvt-prompt-text" }, val),
-        el("button", { class: "cvt-btn ghost", style: { marginTop:"4px", fontSize:"10px", padding:"3px 10px" }, onclick: () => { navigator.clipboard.writeText(val).then(()=>_toast("Copied!")); } }, "📋 Copy"));
-      panel.appendChild(box);
-    } else {
-      panel.append(el("div", { class: "cvt-gen-row" },
-        el("span", { class: "cvt-gen-label" }, t),
-        el("span", { class: "cvt-gen-value" }, String(val))));
-    }
+  // Left: image
+  var imgWrap = el("div", { style: { flex:"0 1 auto", maxHeight:"90vh", display:"flex", alignItems:"center" } });
+  var mainImg = el("img", {
+    src: img.url,
+    style: { maxWidth:"70vw", maxHeight:"88vh", objectFit:"contain", borderRadius:"var(--civ-radius)", boxShadow:"0 20px 60px rgba(0,0,0,.70)", transition:"transform .25s var(--civ-spring)" }
   });
+  if (img.width && img.height) mainImg.style.aspectRatio = img.width + "/" + img.height;
+  imgWrap.appendChild(mainImg);
+
+  // Right: generation parameters panel
+  var meta = img.meta || {};
+  var panel = el("div", { class: "cvt-gen-panel" });
+
+  // Image info
+  panel.appendChild(el("div", { class: "cvt-gen-heading" }, "\uD83D\uDDBC\uFE0F  Info"));
+  panel.appendChild(el("div", { class: "cvt-gen-row" },
+    el("span", { class: "cvt-gen-label" }, "Dimensions"),
+    el("span", {}, img.width && img.height ? img.width + " \u00D7 " + img.height : "\u2014")));
+
+  if (meta && Object.keys(meta).length) {
+    // Positive prompt
+    if (meta.prompt) {
+      var promptBox = el("div", { class: "cvt-prompt-box" });
+      promptBox.appendChild(el("div", { class: "cvt-gen-label" }, "\u2728 Prompt"));
+      promptBox.appendChild(el("div", { class: "cvt-prompt-text" }, meta.prompt));
+      var cpBtn = el("button", { class: "cvt-btn ghost cvt-copy-btn" }, "\uD83D\uDCCB Copy");
+      cpBtn.onclick = function(e) { e.stopPropagation(); navigator.clipboard.writeText(meta.prompt).then(function() { _toast("Positive prompt copied!", "ok"); }); };
+      promptBox.appendChild(cpBtn);
+      panel.appendChild(promptBox);
+    }
+
+    // Negative prompt
+    if (meta.negativePrompt) {
+      var negBox = el("div", { class: "cvt-prompt-box" });
+      negBox.appendChild(el("div", { class: "cvt-gen-label" }, "\uD83D\uDEAB Negative"));
+      negBox.appendChild(el("div", { class: "cvt-prompt-text" }, meta.negativePrompt));
+      var negCp = el("button", { class: "cvt-btn ghost cvt-copy-btn" }, "\uD83D\uDCCB Copy");
+      negCp.onclick = function(e) { e.stopPropagation(); navigator.clipboard.writeText(meta.negativePrompt).then(function() { _toast("Negative prompt copied!", "ok"); }); };
+      negBox.appendChild(negCp);
+      panel.appendChild(negBox);
+    }
+
+    // Generation parameters grid
+    panel.appendChild(el("div", { class: "cvt-gen-heading", style: { marginTop:"12px" } }, "\u2699\uFE0F  Params"));
+    var params = [
+      ["Model", meta.Model || meta.model || "\u2014"],
+      ["Sampler", meta.sampler || meta.Sampler || "\u2014"],
+      ["Seed", meta.seed != null ? String(meta.seed) : "\u2014"],
+      ["CFG", meta.cfgScale != null ? String(meta.cfgScale) : "\u2014"],
+      ["Steps", meta.steps != null ? String(meta.steps) : "\u2014"],
+      ["Batch", meta.batchSize != null ? String(meta.batchSize) : "\u2014"],
+      ["Clip Skip", meta.clipSkip != null ? String(meta.clipSkip) : "\u2014"],
+      ["Hires", meta.hiresUpscaler || meta["Hires upscaler"] || "\u2014"],
+      ["Denoise", meta.denoisingStrength != null ? String(meta.denoisingStrength) : "\u2014"],
+      ["VAE", meta.vae || meta.VAE || "\u2014"],
+    ];
+    var paramGrid = el("div", { class: "cvt-gen-param-grid" });
+    params.forEach(function(p) {
+      paramGrid.appendChild(el("div", { class: "cvt-gen-param-row" },
+        el("span", { class: "cvt-gen-label" }, p[0]),
+        el("span", { class: "cvt-gen-value" }, p[1])));
+    });
+    panel.appendChild(paramGrid);
+
+    // "Use this prompt" button
+    if (meta.prompt) {
+      var useBtn = el("button", { class: "cvt-btn", style: { marginTop:"14px", width:"100%" } }, "\u26A1 Use in workflow");
+      useBtn.onclick = function(e) {
+        e.stopPropagation();
+        var text = "POSITIVE:\n" + meta.prompt + "\n\nNEGATIVE:\n" + (meta.negativePrompt || "") + "\n\nSettings: Steps=" + (meta.steps || "?") + ", CFG=" + (meta.cfgScale || "?") + ", Sampler=" + (meta.sampler || "?") + ", Seed=" + (meta.seed || "?");
+        navigator.clipboard.writeText(text).then(function() { _toast("Prompt + settings copied! Paste into your workflow.", "ok", 4000); });
+      };
+      panel.appendChild(useBtn);
+    }
+  } else {
+    panel.appendChild(el("div", { style: { color:"var(--civ-text-mute)", fontSize:"11px", marginTop:"8px" } }, "No generation parameters available for this image."));
+  }
+
+  content.appendChild(imgWrap);
   content.appendChild(panel);
   bg.appendChild(content);
-  S.lightbox = bg; document.body.appendChild(bg);
-  bg.onclick = e => { if (e.target === bg) closeLightbox(); };
+  S.lightbox = bg;
+  document.body.appendChild(bg);
+
+  // Close with fade animation
+  function _closeLB() {
+    bg.style.opacity = "0";
+    setTimeout(function() { if (bg.parentNode) bg.remove(); }, 200);
+  }
+  bg.onclick = function(e) { if (e.target === bg) _closeLB(); };
+  // Override closeLightbox to use fade
+  S._closeLB = _closeLB;
 }
 
-function closeLightbox() { if (S.lightbox) { S.lightbox.remove(); S.lightbox = null; } }
-function closeModal() { if (S.modal) { S.modal.remove(); S.modal = null; } }
-
-document.addEventListener("keydown", function(e) { if (e.key === "Escape") { closeModal(); closeLightbox(); } });
-
-// ── Download helper ──────────────────────────────────────────────────
-async function _startDl(url, name, subfolder) {
-  try {
-    await _api("/civitai/download", { method: "POST", body: JSON.stringify({ url, filename: name, subfolder }) });
-    _toast(`Queued: ${name}`);
-  } catch (e) { _toast(`Download failed: ${e.message}`, "error"); }
+function _startDl(url, name, subfolder) {
+  _api("/civitai/download", { method: "POST", body: JSON.stringify({ url: url, filename: name, subfolder: subfolder || "" }) })
+    .then(function() { _toast("Queued: " + name); })
+    .catch(function(e) { _toast("Download failed: " + e.message, "error"); });
 }
 
-// =====================================================================
-// 2. HUGGING FACE
-// =====================================================================
+// ── 2. HUGGING FACE ─────────────────────────────────────────────────
 function renderHF(pane) {
-  const sb = el("div", { class: "cvt-searchbar" });
-  const row1 = el("div", { class: "cvt-row" });
-  const qIn = el("input", { type: "text", placeholder: "Search Hugging Face…", id: "cvt-hf-q" });
-  const sortSel = el("select", { id: "cvt-hf-sort" },
-    ...(["lastModified","downloads","likes"].map(s => el("option", { value: s }, s))));
-  row1.append(qIn, sortSel);
-  sb.appendChild(row1);
-  const row2 = el("div", { class: "cvt-row" });
-  const goBtn = el("button", { class: "cvt-btn" }, el("span", { class: "emoji-btn emoji-float" }, "🔍"), " Search HF");
-  row2.appendChild(goBtn);
+  var sb = el("div", { class: "cvt-searchbar" });
+
+  // ---- Manual entry row (repo URL / ID) ----
+  var directIn = el("input", { type: "text", placeholder: "user/repo / URL\u2026", style: { flex:"1", fontFamily:"monospace", fontSize:"11px", background:"#1c1410", borderColor:"#5a3a2a" } });
+  var directBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, "\uD83C\uDFAF");
+  var directRow = el("div", { class: "cvt-row", style: { marginBottom:"6px" } });
+  directRow.appendChild(directIn); directRow.appendChild(directBtn);
+  sb.appendChild(directRow);
+
+  directBtn.onclick = function() { _lookupHF(directIn.value, directIn); };
+  directIn.onkeydown = function(e) { if (e.key === "Enter") directBtn.click(); };
+
+  // ---- Search ----
+  var row1 = el("div", { class: "cvt-row" });
+  var qIn = el("input", { type: "text", placeholder: "Search Hugging Face\u2026", id: "cvt-hf-q", style: { flex:1 } });
+  var sortSel = el("select", { id: "cvt-hf-sort", class: "cvt-select-sm", title: "Sort by" });
+  HF_SORTS.forEach(function(s) { sortSel.appendChild(el("option", { value: s }, s)); });
+  row1.appendChild(qIn); row1.appendChild(sortSel); sb.appendChild(row1);
+
+  var row2 = el("div", { class: "cvt-row", style: { flexWrap:"wrap", gap:"4px", alignItems:"center" } });
+  var ptSel = el("select", { id: "cvt-hf-pt", class: "cvt-select-sm", title: "Pipeline" });
+  HF_PIPELINES.forEach(function(p) { ptSel.appendChild(el("option", { value: p }, p || "Any pipeline")); });
+  var libSel = el("select", { id: "cvt-hf-lib", class: "cvt-select-sm", title: "Library" });
+  HF_LIBRARIES.forEach(function(l) { libSel.appendChild(el("option", { value: l }, l || "Any library")); });
+  var authorIn = el("input", { type: "text", placeholder: "Author", style: { flex:"0 0 auto", width:"100px", fontSize:"11px" } });
+  var goBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, "\uD83D\uDD0D");
+  row2.appendChild(ptSel); row2.appendChild(libSel); row2.appendChild(authorIn); row2.appendChild(goBtn);
   sb.appendChild(row2);
   pane.appendChild(sb);
 
-  const grid = el("div", { class: "cvt-grid", id: "cvt-hf-grid" });
+  var grid = el("div", { class: "cvt-grid", id: "cvt-hf-grid" });
   pane.appendChild(grid);
 
   goBtn.onclick = _srch;
-  qIn.onkeydown = e => { if (e.key === "Enter") _srch(); };
+  qIn.onkeydown = function(e) { if (e.key === "Enter") _srch(); };
 
-  async function _srch() {
-    grid.innerHTML = `<div class="cvt-spinner"></div>`;
-    S.hf.query = qIn.value; S.hf.sort = sortSel.value;
-    const params = new URLSearchParams({ query: S.hf.query, sort: S.hf.sort });
-    try {
-      const d = await _api(`/civitai/hf-search?${params}`);
+  function _srch() {
+    grid.innerHTML = '<div class="cvt-spinner"></div>';
+    S.hf.query = qIn.value;
+    S.hf.sort = sortSel.value;
+    S.hf.pipeline_tag = ptSel.value;
+    S.hf.library = libSel.value;
+    S.hf.author = authorIn.value;
+    var params = new URLSearchParams({
+      query: S.hf.query, sort: S.hf.sort,
+      limit: "30",
+    });
+    if (S.hf.pipeline_tag) params.set("pipeline_tag", S.hf.pipeline_tag);
+    if (S.hf.library) params.set("library", S.hf.library);
+    if (S.hf.author) params.set("author", S.hf.author);
+    _api("/civitai/hf-search?" + params.toString()).then(function(d) {
       S.hf.items = d.items || [];
       grid.innerHTML = "";
-      if (!S.hf.items.length) { grid.innerHTML = `<div class="cvt-empty" style="grid-column:1/-1">No models found</div>`; return; }
-      S.hf.items.forEach(m => {
-        const card = el("div", { class: "cvt-card" });
-        const rep = m.modelId || m.id || "";
-        const ini = rep.split("/").map(s=>s[0]).join("").toUpperCase().slice(0,2) || "HF";
-        card.appendChild(el("div", { class: "thumb", style: { display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#3a2a5a,#1e3a5a)", color:"#fff", fontSize:"28px", fontWeight:700 } }, ini));
-        const body = el("div", { class: "body" },
-          el("div", { class: "title" }, rep),
+      if (!S.hf.items.length) { grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1">No models found</div>'; return; }
+      S.hf.items.forEach(function(m) {
+        var rep = m.modelId || m.id || "";
+        var ini = rep.split("/").filter(Boolean).map(function(s) { return s[0]; }).join("").toUpperCase().slice(0, 2) || "HF";
+        var totalSize = 0;
+        if (m.siblings && m.siblings.length) {
+          m.siblings.forEach(function(s) {
+            if (s.size && /\.(safetensors|ckpt|pt|bin|pth|gguf)$/i.test(s.rfilename || "")) totalSize += s.size;
+          });
+        }
+        var card = el("div", { class: "cvt-card" });
+        card.appendChild(el("div", { class: "thumb", style: { display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#3a2a5a,#1e3a5a)",color:"#fff",fontSize:"28px",fontWeight:700 } }, ini));
+        card.appendChild(el("div", { class: "body" },
+          el("div", { class: "title", style: { color:"#ff8c42" } }, rep),
           el("div", { class: "meta" },
-            el("span", {}, `⬇ ${_fmtNum(m.downloads||0)}`),
-            el("span", {}, `❤ ${_fmtNum(m.likes||0)}`)));
-        card.appendChild(body);
-        card.onclick = () => _hfDetail(rep, m);
+            el("span", {}, "\u2B07 " + _fmtNum(m.downloads || 0)),
+            el("span", {}, "\u2764 " + _fmtNum(m.likes || 0)),
+            totalSize ? el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes(totalSize)) : null)));
+        card.onclick = function() { _hfDetail(rep); };
         grid.appendChild(card);
       });
-    } catch (e) { grid.innerHTML = `<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ${e.message}</div>`; }
+    }).catch(function(e) { grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ' + e.message + '</div>'; });
   }
 }
 
-async function _hfDetail(repoId, data) {
-  const bg = el("div", { class: "cvt-modal-bg" });
-  const wrap = el("div", { class: "cvt-modal-wrap" });
-  const close = el("button", { class: "close" }, "×");
-  const modal = el("div", { class: "cvt-modal" });
-  wrap.append(close, modal); bg.appendChild(wrap); document.body.appendChild(bg);
-  close.onclick = () => bg.remove(); bg.onclick = e => { if (e.target===bg) bg.remove(); };
+function _lookupHF(raw, fieldEl) {
+  var v = (raw || "").trim();
+  if (!v || v.indexOf("/") < 0) { _toast("Enter a repo in format: user/repo", "error"); return; }
+  if (fieldEl) fieldEl.disabled = true;
+  _api("/civitai/hf-lookup?repo=" + encodeURIComponent(v)).then(function(data) {
+    if (data && data.id) {
+      _hfDetail(data.id);
+    } else {
+      _toast("Repo not found", "error");
+    }
+  }).catch(function(e) { _toast("Lookup failed: " + e.message, "error"); })
+  .then(function() { if (fieldEl) fieldEl.disabled = false; });
+}
 
-  const left = el("div", { class: "left" });
-  const right = el("div", { class: "right" });
-  modal.append(left, right);
-  left.append(el("h2", {}, repoId), el("div", { class: "sub" }, "Loading…"));
+function _hfDetail(repoIdOrData) {
+  var repoId = typeof repoIdOrData === "string" ? repoIdOrData : (repoIdOrData.id || "");
+  if (!repoId || repoId.indexOf("/") < 0) { _toast("Invalid repo ID", "error"); return; }
+  var bg = el("div", { class: "cvt-modal-bg" });
+  var wrap = el("div", { class: "cvt-modal-wrap" });
+  var closeBtn = el("button", { class: "close" }, "\u00D7");
+  var modal = el("div", { class: "cvt-modal" });
+  wrap.appendChild(closeBtn); wrap.appendChild(modal); bg.appendChild(wrap);
+  document.body.appendChild(bg);
+  closeBtn.onclick = function() { bg.remove(); };
+  bg.onclick = function(e) { if (e.target === bg) bg.remove(); };
 
-  try {
-    const [u, n] = repoId.split("/");
-    const info = data && data.siblings ? data : await _api(`/civitai/hf-files?repo_id=${encodeURIComponent(repoId)}`);
-    const files = Array.isArray(info) ? info : info.siblings || [];
-    left.querySelector(".sub").textContent = `${files.length} files`;
-    const fl = el("div", { class: "cvt-files-list", style: { maxHeight:"60vh", flex:1, marginTop:"8px" } });
-    files.forEach(f => {
-      const fn = f.rfilename || f.path || "";
-      const row = el("div", { class: "f" },
-        el("span", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, fn),
-        el("span", { style: { display:"flex", gap:"4px", alignItems:"center" } },
-          el("span", { style: { color:"var(--civ-text-mute)" } }, f.size ? _fmtBytes(f.size) : ""),
-          /\.(safetensors|ckpt|pt|pth|gguf|bin)$/i.test(fn) ? el("button", { class: "cvt-btn ghost", style: { padding:"2px 8px", fontSize:"10px" }, dataset: { repo: repoId, path: fn } }, "⬇") : null));
+  var left = el("div", { class: "left" });
+  var right = el("div", { class: "right" });
+  modal.appendChild(left); modal.appendChild(right);
+  left.appendChild(el("h2", { style: { color:"#ff8c42" } }, repoId));
+  left.appendChild(el("div", { class: "sub" }, "Loading\u2026"));
+
+  _api("/civitai/hf-files?repo_id=" + encodeURIComponent(repoId)).then(function(info) {
+    var files = Array.isArray(info) ? info : info.siblings || [];
+    var data = info.data || info;
+    var pt = data.pipeline_tag || data.library_name || "?";
+    left.querySelector(".sub").innerHTML = "";
+    left.querySelector(".sub").textContent = "task: " + pt + " \u00B7 \u2B07 " + _fmtNum(data.downloads || 0) + " \u00B7 \u2764 " + _fmtNum(data.likes || 0);
+
+    // Revision input
+    right.appendChild(el("label", {}, "Branch / commit"));
+    var revIn = el("input", { type: "text", value: "main", style: { marginTop:"4px" } });
+    right.appendChild(revIn);
+
+    // Weights filter
+    right.appendChild(el("label", {}, "Files"));
+    var filterRow = el("div", { class: "cvt-row", style: { marginTop:"4px" } });
+    var onlyWeights = el("input", { type: "checkbox", checked: true });
+    filterRow.appendChild(el("label", { style: { display:"flex", alignItems:"center", gap:"4px", fontSize:"11px" } }, onlyWeights, " weights only"));
+    right.appendChild(filterRow);
+
+    // File list as select
+    var fileSel = el("select", { size: "10", style: { width:"100%", marginTop:"4px", padding:"4px" } });
+    right.appendChild(fileSel);
+
+    function fillFiles() {
+      var sibs = files.slice();
+      sibs.sort(function(a, b) { return (a.rfilename || "").localeCompare(b.rfilename || ""); });
+      fileSel.innerHTML = "";
+      for (var i = 0; i < sibs.length; i++) {
+        var fn = sibs[i].rfilename || "";
+        if (onlyWeights.checked && !/\.(safetensors|ckpt|pt|bin|pth|gguf|onnx|pkl|npz)$/i.test(fn)) continue;
+        var sz = sibs[i].size ? "  (" + _fmtBytes(sibs[i].size) + ")" : "";
+        fileSel.appendChild(el("option", { value: fn }, fn + sz));
+      }
+      // Auto-pick biggest .safetensors
+      var best = null, bestSize = 0;
+      for (var j = 0; j < fileSel.options.length; j++) {
+        var sib = files.find(function(x) { return x.rfilename === fileSel.options[j].value; });
+        if (sib && /\.safetensors$/i.test(fileSel.options[j].value) && (sib.size || 0) > bestSize) {
+          best = fileSel.options[j].value; bestSize = sib.size || 0;
+        }
+      }
+      if (best) fileSel.value = best;
+    }
+    onlyWeights.onchange = fillFiles;
+    fillFiles();
+
+    // Folder dropdown
+    right.appendChild(el("label", { style: { marginTop:"10px" } }, "Folder"));
+    var folderSel = el("select");
+    folderSel.appendChild(el("option", { value: "auto" }, "Auto"));
+    _api("/civitai/folders").then(function(r) {
+      (r.folders || []).forEach(function(f) { folderSel.appendChild(el("option", { value: f }, f)); });
+    }).catch(function() {});
+    right.appendChild(folderSel);
+
+    // Subfolder + overwrite
+    right.appendChild(el("label", {}, "Subfolder"));
+    var subIn = el("input", { type: "text", placeholder: "subfolder\u2026", style: { marginTop:"4px" } });
+    right.appendChild(subIn);
+
+    var overwriteLbl = el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"8px" } },
+      el("input", { type: "checkbox" }), " Overwrite");
+    right.appendChild(overwriteLbl);
+    var subfolderLbl = el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } },
+      el("input", { type: "checkbox" }), " Keep subfolders");
+    right.appendChild(subfolderLbl);
+
+    // Metadata + preview checkboxes
+    var metaCb = el("input", { type: "checkbox" });
+    var prevCb = el("input", { type: "checkbox" });
+    right.appendChild(el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"6px" } }, metaCb, " Save .civitai.json"));
+    right.appendChild(el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } }, prevCb, " Save preview"));
+
+    // Download + Metadata only buttons
+    var dlBtn = el("button", { class: "cvt-btn cvt-btn-xs", style: { marginTop:"10px", width:"100%" } },
+      el("span", { class: "emoji-btn" }, "\u2B07"), " Download");
+    var metaOnlyBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { marginTop:"6px", width:"100%" } }, "\uD83D\uDCC4 Meta");
+    right.appendChild(dlBtn); right.appendChild(metaOnlyBtn);
+
+    var statusLine = el("div", { class: "sub", style: { marginTop:"10px" } });
+    right.appendChild(statusLine);
+
+    function _submitHF(metadataOnly) {
+      var btn = metadataOnly ? metaOnlyBtn : dlBtn;
+      var path = fileSel.value;
+      if (!path && !metadataOnly) {         statusLine.innerHTML = "<span style='color:#e88'>Pick a file first.</span>"; return; }
+      btn.disabled = true;
+      statusLine.textContent = metadataOnly ? "Fetching metadata\u2026" : "Starting download\u2026";
+      var body = {
+        repo_id: repoId,
+        revision: revIn.value.trim() || "main",
+        path: path,
+        save_as: folderSel.value || "auto",
+        subfolder: subIn.value.trim(),
+        overwrite: overwriteLbl.querySelector("input").checked,
+        preserve_subfolders: subfolderLbl.querySelector("input").checked,
+        save_metadata: metaCb.checked,
+        save_preview: prevCb.checked,
+        metadata_only: metadataOnly,
+      };
+      _api("/civitai/hf/download", { method:"POST", body:JSON.stringify(body) }).then(function(job) {
+        statusLine.innerHTML = "";
+        statusLine.appendChild(document.createTextNode("Queued: "));
+        statusLine.appendChild(el("b", {}, job.id));
+        statusLine.appendChild(document.createTextNode(" \u2014 open "));
+        var dlLink = el("a", { href: "#", style: { color:"#ec9", cursor:"pointer" } }, "Downloads");
+        dlLink.onclick = function(e) {
+          e.preventDefault(); bg.remove();
+          if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "downloads" }));
+        };
+        statusLine.appendChild(dlLink);
+        statusLine.appendChild(document.createTextNode(" to monitor."));
+        _toast(metadataOnly ? "HF metadata queued" : "HF queued: " + (job.filename || path), "ok");
+      }).catch(function(e) {
+        statusLine.innerHTML = "";
+        statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
+        _toast("HF error: " + e.message, "error", 5000);
+      }).then(function() { btn.disabled = false; });
+    }
+
+    dlBtn.onclick = function() { _submitHF(false); };
+    metaOnlyBtn.onclick = function() {
+      if (!metaCb.checked && !prevCb.checked) {
+        statusLine.innerHTML = "<span style='color:#e88'>Enable at least one of metadata sidecar / preview image.</span>";
+        return;
+      }
+      _submitHF(true);
+    };
+
+    // File list on left
+    left.appendChild(el("label", { style: { marginTop:"8px" } }, "Files"));
+    var fl = el("div", { class: "cvt-files-list", style: { maxHeight:"60vh", flex:1, marginTop:"4px" } });
+    files.forEach(function(f) {
+      var fn = f.rfilename || f.path || "";
+      var isWeight = /\.(safetensors|ckpt|pt|pth|gguf|bin)$/i.test(fn);
+      var row = el("div", { class: "f" });
+      row.appendChild(el("span", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 } }, fn));
+      var rightSpan = el("span", { style: { display:"inline-flex", gap:"4px", alignItems:"center", flexShrink:0 } });
+      rightSpan.appendChild(el("span", { style: { color:"var(--civ-text-mute)" } }, f.size ? _fmtBytes(f.size) : ""));
+      if (isWeight) {
+        var dlBtn2 = el("button", { class: "cvt-btn ghost", style: { padding:"2px 8px", fontSize:"10px" } }, "\u2B07");
+        dlBtn2.onclick = function() {
+          var name = fn.split("/").pop();
+          var sf = subIn.value || "";
+          var fldr = folderSel.value || "loras";
+          _startDl("https://huggingface.co/" + repoId + "/resolve/main/" + encodeURIComponent(fn), name, fldr + (sf ? "/" + sf : ""));
+        };
+        rightSpan.appendChild(dlBtn2);
+      }
+      row.appendChild(rightSpan);
       fl.appendChild(row);
     });
     left.appendChild(fl);
-
-    right.append(el("label", {}, "Save to folder"));
-    const folderIn = el("input", { type: "text", placeholder: "loras / checkpoints / vae …", style: { marginTop:"4px" } });
-    right.append(folderIn);
-    const subIn = el("input", { type: "text", placeholder: "subfolder (optional)", style: { marginTop:"4px" } });
-    right.append(el("label", {}, "Subfolder"), subIn);
-    const dlBtn = el("button", { class: "cvt-btn", style: { width:"100%", marginTop:"12px", padding:"10px 0" } }, "⬇ Download All");
-    right.appendChild(dlBtn);
-    dlBtn.onclick = () => {
-      fl.querySelectorAll(".f button").forEach(b => {
-        const path = b.dataset.path; const repo = b.dataset.repo;
-        if (path && repo) {
-          const name = path.split("/").pop();
-          const subfolder = subIn.value || "";
-          const type = folderIn.value || "loras";
-          _startDl(`https://huggingface.co/${repo}/resolve/main/${encodeURIComponent(path)}`, name, `${type}/${subfolder}`.replace(/\/+$/,""));
-        }
-      });
-    };
-  } catch (e) { left.innerHTML = `<div class="cvt-empty">Error: ${e.message}</div>`; }
+  }).catch(function(e) { left.innerHTML = '<div class="cvt-empty">Error: ' + e.message + '</div>'; });
 }
 
-// =====================================================================
-// 3. DOWNLOADS
-// =====================================================================
-let _dlTimer = null;
+// ── 3. DOWNLOADS ────────────────────────────────────────────────────
+var _dlTimer = null;
+var _dlListEl = null;
+var _dlHeader = null;
+var _dlCountEl = null;
+
 function renderDownloads(pane) {
-  const header = el("div", { style: { marginBottom:"10px", fontWeight:600, fontSize:"14px" } }, "Downloads Queue");
-  pane.appendChild(header);
-  const list = el("div", { id: "cvt-dl-list" });
-  pane.appendChild(list);
-  _pollDl(list);
+  _dlListEl = null;
+
+  // Header (static)
+  _dlHeader = el("div", { class: "cvt-row", style: { marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
+  var refreshBtn = el("button", { class: "cvt-btn ghost" },
+    el("span", { class: "emoji-btn emoji-spin-slow" }, "\u21BB"), " Refresh");
+  refreshBtn.onclick = _pollDl;
+  _dlCountEl = el("div", { style: { textAlign:"right", fontSize:"11px", color:"var(--civ-text-dim)", flex:"2", alignSelf:"center" } });
+  _dlHeader.appendChild(refreshBtn);
+  _dlHeader.appendChild(_dlCountEl);
+  pane.appendChild(_dlHeader);
+
+  _dlListEl = el("div");
+  pane.appendChild(_dlListEl);
+  _pollDl();
 }
 
-async function _pollDl(list) {
-  try {
-    const d = await _api("/civitai/downloads");
+function _pollDl() {
+  if (!_dlListEl || !document.body.contains(_dlListEl)) {
+    if (_dlTimer) { clearInterval(_dlTimer); _dlTimer = null; }
+    return;
+  }
+  _api("/civitai/downloads").then(function(d) {
+    if (!_dlListEl || !document.body.contains(_dlListEl)) return;
     S.downloads = d.items || [];
-    list.innerHTML = "";
-    if (!S.downloads.length) { list.appendChild(el("div", { class: "cvt-empty" }, "No downloads yet.")); return; }
-    S.downloads.forEach(j => {
-      const pct = j.progress || 0;
-      const row = el("div", { class: `cvt-job ${j.status || "running"}` });
-      const top = el("div", { class: "top" });
-      top.append(el("div", { class: "name" },
-        el("span", { class: `cvt-status-dot ${j.status || "running"}` }),
-        " ", j.filename || "?"));
-      if (j.status === "downloading" || j.status === "running") {
-        const cnl = el("button", { class: "cvt-btn ghost", style: { padding:"2px 8px", fontSize:"11px" } }, "✕");
-        cnl.onclick = async () => { await _api("/civitai/download-cancel", { method:"POST", body:JSON.stringify({task_id:j.id}) }); };
-        top.appendChild(cnl);
-      }
-      row.appendChild(top);
-      row.appendChild(el("div", { class: "sub" }, `${pct}% · ${_fmtBytes(j.downloaded||0)} / ${_fmtBytes(j.total||0)}${j.speed ? " · "+_fmtBytes(j.speed)+"/s" : ""}${j.error ? " · "+j.error : ""}`));
-      const bar = el("div", { class: "bar" });
-      bar.appendChild(el("div", { style: { width:`${pct}%` } }));
-      row.appendChild(bar);
-      list.appendChild(row);
-    });
-  } catch(e) { /* silent */ }
+
+    // Adaptive heartbeat: stop polling if no active jobs or tab hidden
+    _activeJobs = S.downloads.filter(function(j) { return j.status === "running" || j.status === "queued" || j.status === "downloading"; }).length;
+    _dlCountEl.textContent = S.downloads.length + " job(s)";
+
+    // Diff rendering: only replace list content
+    _dlListEl.innerHTML = "";
+    if (!S.downloads.length) {
+      _dlListEl.appendChild(el("div", { class: "cvt-empty" }, "No downloads yet."));
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    S.downloads.forEach(function(j) { frag.appendChild(_jobRow(j)); });
+    _dlListEl.appendChild(frag);
+  }).catch(function() {});
+
+  // Adaptive heartbeat: only poll when visible and active
   if (_dlTimer) clearInterval(_dlTimer);
-  _dlTimer = setInterval(() => _pollDl(list), 2000);
+  if (_activeJobs > 0 && !document.hidden) {
+    _dlTimer = setInterval(_pollDl, 1500);
+  } else {
+    _dlTimer = null;
+  }
 }
 
-// =====================================================================
-// 4. LOCAL MODELS
-// =====================================================================
-function renderLocal(pane) {
-  const row = el("div", { class: "cvt-row", style: { marginBottom:"10px", flexWrap:"wrap" } });
-  const filterIn = el("input", { type: "text", placeholder: "Filter…", style: { flex:"1", minWidth:"100px" } });
-  const scanBtn = el("button", { class: "cvt-btn ghost" }, "🔍 Scan");
-  const tagBtn = el("button", { class: "cvt-btn ghost" }, "🏷 Auto-Tag");
-  const cleanBtn = el("button", { class: "cvt-btn ghost" }, "🧹 Cleanup");
-  const orgBtn = el("button", { class: "cvt-btn ghost" }, "📂 Organize");
-  const expBtn = el("button", { class: "cvt-btn ghost" }, "📋 Export");
-  row.append(filterIn, scanBtn, tagBtn, cleanBtn, orgBtn, expBtn);
-  pane.appendChild(row);
-  const list = el("div", { class: "cvt-local-list", id: "cvt-local-list" });
-  list.appendChild(el("div", { class: "cvt-empty" }, 'Click "Scan" to list local models.'));
-  pane.appendChild(list);
+function _jobRow(j) {
+  var pct = j.progress != null ? Math.round(j.progress) : 0;
+  var row = el("div", { class: "cvt-job " + (j.status || "") });
+  var top = el("div", { class: "top" });
 
-  scanBtn.onclick = async () => {
-    scanBtn.textContent = "Scanning…"; scanBtn.disabled = true;
-    try {
-      const d = await _api("/civitai/local-models?force_refresh=true");
-      S.local.models = d.models || [];
-      _renderLocalList(list, filterIn);
-      _toast(`Found ${S.local.models.length} models`);
-    } catch(e) { _toast("Scan failed: "+e.message, "error"); }
-    scanBtn.textContent = "🔍 Scan"; scanBtn.disabled = false;
-  };
-  filterIn.oninput = () => _renderLocalList(list, filterIn);
-  tagBtn.onclick = async () => { tagBtn.textContent = "…"; await _api("/civitai/auto-tag", { method:"POST", body:"{}" }); tagBtn.textContent = "🏷 Auto-Tag"; _toast("Auto-tag complete"); };
-  cleanBtn.onclick = async () => { const r=await _api("/civitai/cleanup-scan", { method:"POST" }); _toast(`Found ${(r.issues||[]).length} issues`); };
-  orgBtn.onclick = async () => { const r=await _api("/civitai/auto-organize", { method:"POST" }); _toast(`Organized ${r.moved} files`); scanBtn.click(); };
-  expBtn.onclick = async () => { const r=await _api("/civitai/export-list"); if(r.text){ await navigator.clipboard.writeText(r.text); _toast(`Copied ${r.count} paths`); } };
+  // Source badge
+  var srcBadge = j.source === "hf"
+    ? el("span", { class: "cvt-badge", style: { background:"#3a4a6a" } }, "\uD83E\uDD17 HF")
+    : el("span", { class: "cvt-badge", style: { background:"#5a2a2a" } }, "Civitai");
+
+  top.appendChild(el("div", { class: "name" },
+    el("span", { class: "cvt-status-dot " + (j.status || "") }),
+    " ", srcBadge, " ",
+    j.filename || j.name || (j.source === "hf"
+      ? (j.hf_repo_id || "") + ":" + (j.hf_path || "")
+      : "version " + (j.model_version_id || ""))));
+
+  // Cancel button
+  if (j.status === "running" || j.status === "queued" || j.status === "downloading") {
+    var cnl = el("button", { class: "cvt-btn ghost", style: { padding:"2px 6px", fontSize:"11px" } }, "\u2715");
+    cnl.onclick = function() {
+      _api("/civitai/download-cancel", { method:"POST", body:JSON.stringify({task_id:j.id}) }).then(function() { _pollDl(); });
+    };
+    top.appendChild(cnl);
+  }
+  row.appendChild(top);
+
+  // Sub info
+  var subText = pct + "% \u00B7 " + _fmtBytes(j.downloaded || 0) + " / " + _fmtBytes(j.total || 0);
+  if (j.speed_bps || j.speed) subText += " \u00B7 " + _fmtBytes(j.speed_bps || j.speed) + "/s";
+  if (j.error) subText += " \u00B7 " + j.error;
+  row.appendChild(el("div", { class: "sub" }, subText));
+
+  // Progress bar
+  var bar = el("div", { class: "bar" });
+  bar.appendChild(el("div", { style: { width: pct + "%" } }));
+  row.appendChild(bar);
+
+  // Filepath on success
+  if (j.filepath && j.status === "done") {
+    row.appendChild(el("div", { class: "sub", style: { marginTop:"4px", color:"#9c9" } }, "Saved to " + j.filepath));
+  }
+
+  return row;
 }
 
-function _renderLocalList(list, filterIn) {
-  const q = (filterIn.value||"").toLowerCase();
-  const filtered = S.local.models.filter(m => m.name?.toLowerCase().includes(q) || m.type?.includes(q));
-  list.innerHTML = "";
-  if (!filtered.length) { list.appendChild(el("div", { class: "cvt-empty" }, "No models")); return; }
-  const header = el("div", { style: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"8px" } },
-    el("span", { class: "cvt-local-count" }, `${filtered.length} model(s)`));
-  list.appendChild(header);
-  filtered.slice(0, 200).forEach(m => {
-    const card = el("div", { class: "cvt-local-card" });
-    const hdr = el("div", { style: { display:"flex", justifyContent:"space-between", alignItems:"center" } },
-      el("h3", {}, m.name || ""),
-      el("button", { class: "cvt-btn ghost", style: { padding:"2px 8px", fontSize:"11px", color:"#f66" } }, "🗑"));
-    hdr.lastChild.onclick = async e => { e.stopPropagation(); if (!confirm(`Delete ${m.name}?`)) return; await _api("/civitai/delete-model", { method:"POST", body:JSON.stringify({path:m.path}) }); S.local.models = S.local.models.filter(x=>x.path!==m.path); _renderLocalList(list, filterIn); };
-    card.appendChild(hdr);
-    const meta = el("div", { class: "cvt-local-meta" });
-    meta.append(el("div", {}, el("strong", {}, "Type: "), m.type || "?"), el("div", {}, el("strong", {}, "Size: "), m.size || "?"));
-    if (m.civitai?.name) meta.appendChild(el("div", {}, el("strong", {}, "Civitai: "), m.civitai.name));
-    card.appendChild(meta);
-    if (m.civitai?.url) card.appendChild(el("div", { style: { fontSize:"11px" } }, el("a", { href: m.civitai.url, target:"_blank", style: { color:"var(--civ-text)" } }, "🌐 View on Civitai")));
-    const actions = el("div", { class: "cvt-local-actions" });
-    const cp = el("button", { class: "cvt-btn ghost", style: { fontSize:"11px", padding:"3px 10px" } }, "📋 Copy Path");
-    cp.onclick = async () => { await navigator.clipboard.writeText(m.path || m.name); _toast("Copied"); };
-    actions.appendChild(cp);
-    card.appendChild(actions);
-    list.appendChild(card);
+// Adaptive heartbeat: pause when tab hidden
+document.addEventListener("visibilitychange", function() {
+  if (!document.hidden && _activeJobs > 0 && !_dlTimer) {
+    _pollDl();
+  }
+});
+
+// ── 4. LOCAL MODELS ─────────────────────────────────────────────────
+function renderLocal(pane, force) {
+  // Loading state
+  pane.innerHTML = "";
+  pane.appendChild(el("div", { class: "cvt-spinner" }));
+  pane.appendChild(el("div", { style: { textAlign:"center", marginTop:"8px", fontSize:"11px", color:"var(--civ-text-dim)" } }, "Scanning models folder\u2026"));
+
+  _api("/civitai/local-models" + (force ? "?force_refresh=true" : "")).then(function(d) {
+    S.local.models = d.models || [];
+    _buildLocalUI(pane, d);
+  }).catch(function(e) {
+    pane.innerHTML = "";
+    var errBox = el("div", { class: "cvt-empty", style: { padding:"30px 20px", textAlign:"center" } },
+      el("div", { style: { fontSize:"16px", marginBottom:"8px" } }, "\u26A0\uFE0F"),
+      el("div", { style: { fontWeight:600, marginBottom:"6px" } }, "Could not scan local models"),
+      el("div", { style: { fontSize:"11px", color:"var(--civ-text-mute)" } }, e.message || "Unknown error"),
+      el("button", { class: "cvt-btn ghost", style: { marginTop:"14px" } },
+        el("span", { class: "emoji-btn emoji-spin-slow" }, "\u21BB"), " Retry"));
+    errBox.querySelector("button").onclick = function() { renderLocal(pane); };
+    pane.appendChild(errBox);
   });
 }
 
-// =====================================================================
-// 5. SETTINGS
-// =====================================================================
-async function renderSettings(pane) {
-  const s = el("div", { class: "cvt-settings" });
+function _buildLocalUI(pane, data) {
+  pane.innerHTML = "";
 
-  // API Key
-  const apiGroup = el("div", { class: "group" });
-  apiGroup.append(el("label", {}, "Civitai API Key (required for private/gated models)"));
-  const apiRow = el("div", { class: "cvt-row", style: { marginTop:"6px" } });
-  const apiIn = el("input", { type: "password", placeholder: "civitai_…", style: { flex:1 } });
-  const saveApi = el("button", { class: "cvt-btn", style: { padding:"5px 12px", fontSize:"11px" } }, "💾 Save");
-  const clearApi = el("button", { class: "cvt-btn ghost", style: { padding:"5px 12px", fontSize:"11px" } }, "🗑 Clear");
-  apiRow.append(apiIn, saveApi, clearApi);
-  apiGroup.appendChild(apiRow);
-  apiGroup.appendChild(el("div", { class: "hint" }, "Get a token at civitai.com/user/account → API Keys."));
+  // Header
+  var header = el("div", { style: { display:"flex", alignItems:"center", gap:"8px", marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
+  var count = el("span", { class: "cvt-local-count", style: { flex:"1", textAlign:"left" } }, S.local.models.length + " model(s)");
+  count.title = "Scanned " + (data.count || S.local.models.length) + " models";
+    var browseBtn = el("button", { class: "cvt-btn ghost" },
+      el("span", { class: "emoji-btn emoji-float" }, "\uD83D\uDD0D"), " Browse");
+  browseBtn.onclick = function() { if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "civitai" })); };
+  var refreshBtn = el("button", { class: "cvt-btn ghost" },
+    el("span", { class: "emoji-btn emoji-spin-slow" }, "\u21BB"), " Refresh");
+  refreshBtn.onclick = function() { renderLocal(pane, true); };
+  header.appendChild(count); header.appendChild(browseBtn); header.appendChild(refreshBtn);
+  pane.appendChild(header);
+
+  // Filter row
+  var filterRow = el("div", { class: "cvt-row", style: { marginBottom:"8px" } });
+  var filterIn = el("input", { type: "text", placeholder: "Filter models\u2026", style: { flex:"1" } });
+  filterRow.appendChild(filterIn);
+  pane.appendChild(filterRow);
+
+  // Grid container
+  var grid = el("div", { class: "cvt-grid", id: "cvt-local-grid" });
+  pane.appendChild(grid);
+
+  // Empty state
+  if (!S.local.models.length) {
+    grid.style.display = "block";
+    grid.appendChild(el("div", { class: "cvt-empty", style: { marginTop:"20px" } },
+      el("div", { style: { fontSize:"16px", marginBottom:"10px" } }, "\uD83D\uDCED"),
+      el("div", {}, "No downloaded models found."),
+      el("div", { style: { fontSize:"11px", color:"var(--civ-text-mute)", marginTop:"6px" } },
+        "Download models from the Browse or HF tabs and they'll appear here.")));
+    return;
+  }
+
+  _renderLocalGrid(grid, filterIn);
+  filterIn.oninput = function() { _renderLocalGrid(grid, filterIn); };
+}
+
+function _renderLocalGrid(grid, filterIn) {
+  var q = (filterIn.value || "").toLowerCase();
+  var filtered = S.local.models.filter(function(m) {
+    return (m.name || "").toLowerCase().indexOf(q) >= 0 ||
+           (m.type || "").toLowerCase().indexOf(q) >= 0 ||
+           (m.base_model || "").toLowerCase().indexOf(q) >= 0;
+  });
+  grid.innerHTML = "";
+  if (!filtered.length) {
+    grid.style.display = "block";
+    grid.appendChild(el("div", { class: "cvt-empty" }, "No models match your filter."));
+    return;
+  }
+  grid.style.display = "";
+  filtered.forEach(function(m) {
+    grid.appendChild(_localCard(m, grid, filterIn));
+  });
+}
+
+function _localCard(m, grid, filterIn) {
+  var isNsfw = m.nsfw || (m.nsfwLevel || 0) > 1;
+  var imgUrl = m.preview ? "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=450" : "";
+  var card = el("div", { class: "cvt-card" });
+  var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)", position:"relative", overflow:"hidden" } });
+  if (imgUrl) {
+    thumb.appendChild(el("img", { src: imgUrl, style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.style.display = "none"; } }));
+  }
+  if (isNsfw && window.__nsfwBlurEnabled !== false) {
+    thumb.style.filter = "blur(20px) grayscale(0.5)";
+    thumb.style.willChange = "filter";
+    thumb.addEventListener("mouseenter", function() { this.style.filter = "none"; });
+    thumb.addEventListener("mouseleave", function() { this.style.filter = "blur(20px) grayscale(0.5)"; });
+  }
+  // Hover overlay for prompt info (lazy-fetched, cached globally)
+  var promptOverlay = el("div", { style: { position:"absolute", bottom:"0", left:"0", right:"0", transform:"translateY(100%)", transition:"transform .2s var(--civ-ease-out)", background:"linear-gradient(transparent,rgba(0,0,0,.9))", padding:"24px 6px 6px", fontSize:"9px", lineHeight:"1.3", color:"#ddd", display:"flex", flexDirection:"column", gap:"2px", pointerEvents:"none" } });
+  thumb.appendChild(promptOverlay);
+  thumb.addEventListener("mouseenter", function() {
+    promptOverlay.style.transform = "translateY(0)";
+    var cached = _localPromptCache[m.path];
+    if (cached) {
+      promptOverlay.innerHTML = "";
+      if (cached.prompt) promptOverlay.appendChild(el("div", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, "P: " + cached.prompt));
+      if (cached.negativePrompt) promptOverlay.appendChild(el("div", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", opacity:".7" } }, "N: " + cached.negativePrompt));
+      if (!cached.prompt && !cached.negativePrompt) promptOverlay.appendChild(el("div", { style: { opacity:".5" } }, "No prompt data"));
+    } else if (m.path) {
+      _api("/civitai/local-previews?path=" + encodeURIComponent(m.path)).then(function(r) {
+        var first = (r.images || [])[0] || {};
+        _localPromptCache[m.path] = first;
+        if (promptOverlay.style.transform !== "translateY(0px)") return;
+        promptOverlay.innerHTML = "";
+        if (first.prompt) promptOverlay.appendChild(el("div", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, "P: " + first.prompt));
+        if (first.negativePrompt) promptOverlay.appendChild(el("div", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", opacity:".7" } }, "N: " + first.negativePrompt));
+        if (!first.prompt && !first.negativePrompt) promptOverlay.appendChild(el("div", { style: { opacity:".5" } }, "No prompt data"));
+      }).catch(function() {});
+    }
+  });
+  thumb.addEventListener("mouseleave", function() { promptOverlay.style.transform = "translateY(100%)"; });
+  card.appendChild(thumb);
+
+  var body = el("div", { class: "body" });
+  body.appendChild(el("div", { class: "title" }, m.name || "Unknown"));
+
+  var meta = el("div", { class: "meta" });
+  meta.appendChild(el("span", {}, m.type || "?"));
+  if (m.base_model) meta.appendChild(el("span", { style: { fontSize:"9px", opacity:".6" } }, m.base_model));
+  if (isNsfw) meta.appendChild(el("span", { class: "cvt-badge nsfw" }, "NSFW"));
+  body.appendChild(meta);
+  card.appendChild(body);
+
+  card.onclick = function() { openLocalDetail(m, grid, filterIn); };
+  return card;
+}
+
+// ── 5. SETTINGS ─────────────────────────────────────────────────────
+function renderSettings(pane) {
+  var s = el("div", { class: "cvt-settings" });
+
+  // ---- Civitai API Key ----
+  var apiGroup = el("div", { class: "group" });
+  apiGroup.appendChild(el("label", {}, "Civitai API Key (required for private/gated models)"));
+  var apiIn = el("input", { type: "password", placeholder: "civitai_\u2026", autocomplete: "off" });
+  apiGroup.appendChild(apiIn);
+  var apiHint = el("div", { class: "hint" }, "");
+  apiGroup.appendChild(apiHint);
+  var apiShowBtn = el("button", { class: "cvt-btn ghost", style: { padding:"5px 10px", fontSize:"11px" } }, "\uD83D\uDC41  Show");
+  var apiSaveBtn = el("button", { class: "cvt-btn", style: { padding:"5px 10px", fontSize:"11px" } }, "\uD83D\uDCBE  Save API key");
+  var apiClearBtn = el("button", { class: "cvt-btn ghost", style: { padding:"5px 10px", fontSize:"11px" } }, "\uD83D\uDDD1  Clear");
+  apiGroup.appendChild(el("div", { class: "cvt-row", style: { marginTop:"8px" } }, apiSaveBtn, apiShowBtn, apiClearBtn));
+  var apiStatus = el("div", { class: "hint" }, "");
+  apiGroup.appendChild(apiStatus);
+  apiGroup.appendChild(el("div", { class: "hint" },
+    "Get a token at civitai.com/user/account \u2192 API Keys. Stored locally in api_key.txt (chmod 600)."));
   s.appendChild(apiGroup);
 
-  // HF Token
-  const hfGroup = el("div", { class: "group" });
-  hfGroup.append(el("label", {}, "🤗 Hugging Face Token"));
-  const hfRow = el("div", { class: "cvt-row", style: { marginTop:"6px" } });
-  const hfIn = el("input", { type: "password", placeholder: "hf_…", style: { flex:1 } });
-  const saveHf = el("button", { class: "cvt-btn", style: { padding:"5px 12px", fontSize:"11px" } }, "💾 Save");
-  const clearHf = el("button", { class: "cvt-btn ghost", style: { padding:"5px 12px", fontSize:"11px" } }, "🗑 Clear");
-  hfRow.append(hfIn, saveHf, clearHf);
-  hfGroup.appendChild(hfRow);
-  hfGroup.appendChild(el("div", { class: "hint" }, "Get one at huggingface.co/settings/tokens."));
+  // ---- HF Token ----
+  var hfGroup = el("div", { class: "group" });
+  hfGroup.appendChild(el("label", {}, "\uD83E\uDD17 HF Token (private/gated repos)"));
+  var hfIn = el("input", { type: "password", placeholder: "hf_xxxx\u2026", autocomplete: "off" });
+  hfGroup.appendChild(hfIn);
+  var hfHint = el("div", { class: "hint" }, "");
+  hfGroup.appendChild(hfHint);
+  var hfShowBtn = el("button", { class: "cvt-btn ghost", style: { padding:"5px 10px", fontSize:"11px" } }, "\uD83D\uDC41  Show");
+  var hfSaveBtn = el("button", { class: "cvt-btn", style: { padding:"5px 10px", fontSize:"11px" } }, "\uD83D\uDCBE  Save token");
+  var hfClearBtn = el("button", { class: "cvt-btn ghost", style: { padding:"5px 10px", fontSize:"11px" } }, "\uD83D\uDDD1  Clear");
+  hfGroup.appendChild(el("div", { class: "cvt-row", style: { marginTop:"8px" } }, hfSaveBtn, hfShowBtn, hfClearBtn));
+  var hfStatus = el("div", { class: "hint" }, "");
+  hfGroup.appendChild(hfStatus);
+  hfGroup.appendChild(el("div", { class: "hint" },
+    "huggingface.co/settings/tokens"));
   s.appendChild(hfGroup);
 
-  // Defaults
-  const defGroup = el("div", { class: "group" });
-  defGroup.append(el("label", {}, "Defaults"));
-  const baseSel = el("select", { style: { marginTop:"6px" } },
-    ...(["civitai.com","civitai.work"].map(v => el("option", { value: v }, v))));
-  defGroup.appendChild(baseSel);
-  const cbMeta = el("input", { type: "checkbox" });
-  const cbPrev = el("input", { type: "checkbox" });
-  defGroup.append(
-    el("label", { class: "check" }, cbMeta, " Save .civitai.json"),
-    el("label", { class: "check" }, cbPrev, " Save .preview.png"));
-  s.appendChild(defGroup);
+  // ---- Preferences ----
+  var prefsGroup = el("div", { class: "group" });
+  prefsGroup.appendChild(el("label", {}, "Preferences"));
+  var cbMeta = el("input", { type: "checkbox" });
+  var cbPrev = el("input", { type: "checkbox" });
+  var cbHash = el("input", { type: "checkbox" });
+  var cbNsfwBlur = el("input", { type: "checkbox" });
+  cbNsfwBlur.onchange = function() { window.__nsfwBlurEnabled = cbNsfwBlur.checked; };
+  prefsGroup.appendChild(el("div", { class: "check" }, cbMeta, " Save .civitai.json"));
+  prefsGroup.appendChild(el("div", { class: "check" }, cbPrev, " Save preview image"));
+  prefsGroup.appendChild(el("div", { class: "check" }, cbHash, " Verify SHA256"));
+  prefsGroup.appendChild(el("div", { class: "check" }, cbNsfwBlur, " NSFW blur (card grid + previews)"));
+  s.appendChild(prefsGroup);
 
-  // Quick actions
-  const qaGroup = el("div", { class: "group" });
-  qaGroup.append(el("label", {}, "Quick Actions"));
-  const qaRow = el("div", { class: "cvt-row", style: { marginTop:"8px", flexWrap:"wrap" } });
-  const qaBtns = [
-    ["🏷 Auto-Tag", async () => { await _api("/civitai/auto-tag", { method:"POST", body:"{}" }); _toast("Tagged"); }],
-    ["🧹 Cleanup", async () => { const r=await _api("/civitai/cleanup-scan", { method:"POST" }); _toast(`Found ${(r.issues||[]).length} issues`); }],
-    ["📂 Organize", async () => { const r=await _api("/civitai/auto-organize", { method:"POST" }); _toast(`Organized ${r.moved} files`); }],
-    ["📋 Export", async () => { const r=await _api("/civitai/export-list"); if(r.text){ await navigator.clipboard.writeText(r.text); _toast(`Copied ${r.count} paths`); } }],
-    ["🔍 Rescan", async () => { await _api("/civitai/rescan", { method:"POST", body:JSON.stringify({force:true}) }); _toast("Rescanned"); }],
-  ];
-  qaBtns.forEach(([label, fn]) => {
-    const btn = el("button", { class: "cvt-btn ghost", style: { padding:"5px 12px", fontSize:"11px" } }, label);
-    btn.onclick = fn;
-    qaRow.appendChild(btn);
+  // ---- Base URL ----
+  var baseGroup = el("div", { class: "group" });
+  baseGroup.appendChild(el("label", {}, "Base URL"));
+  var baseSel = el("select");
+  ["civitai.com", "civitai.red"].forEach(function(b) {
+    baseSel.appendChild(el("option", { value: b }, b));
   });
-  qaGroup.appendChild(qaRow);
-  s.appendChild(qaGroup);
+  baseGroup.appendChild(baseSel);
+  s.appendChild(baseGroup);
 
+  // ---- Action buttons ----
+  var saveBtn = el("button", { class: "cvt-btn cvt-btn-xs" }, "\u2714\uFE0F Save");
+  var testBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83D\uDD0C Test");
+  var clearCacheBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83E\uDDF9 Clear");
+  s.appendChild(el("div", { class: "cvt-settings-actions" }, saveBtn, testBtn, clearCacheBtn));
+  var sStatus = el("div", { class: "hint" });
+  s.appendChild(sStatus);
   pane.appendChild(s);
 
-  // Load settings
-  try {
-    const cfg = await _api("/civitai/settings");
-    baseSel.value = cfg.baseUrl?.includes("work") ? "civitai.work" : "civitai.com";
-    cbMeta.checked = cfg.saveMetadata !== false;
-    cbPrev.checked = cfg.savePreview !== false;
-  } catch(e) {}
+  // ---- Load current settings ----
+  _api("/civitai/settings").then(function(cfg) {
+    var netChoice = cfg.network_choice || "com";
+    baseSel.value = netChoice === "com" ? "civitai.com" : netChoice === "work" ? "civitai.work" : "civitai.red";
+    cbMeta.checked = cfg.save_metadata !== false;
+    cbPrev.checked = cfg.save_preview !== false;
+    cbHash.checked = cfg.verify_sha256 !== false;
+    cbNsfwBlur.checked = cfg.nsfw_blur !== false;
+    window.__nsfwBlurEnabled = cfg.nsfw_blur !== false;
+    apiHint.innerHTML = cfg.has_api_key
+      ? "<span style='color:#9c9'>\u25CF API key present</span>"
+      : "<span style='color:#c99'>\u25CB No API key set \u2014 public models only</span>";
+    hfHint.innerHTML = cfg.has_token
+      ? "<span style='color:#9c9'>\u25CF HF token present</span>"
+      : "<span style='color:#c99'>\u25CB No HF token \u2014 public repos only</span>";
+  }).catch(function() {});
 
-  saveApi.onclick = async () => { await _api("/civitai/settings", { method:"POST", body:JSON.stringify({civitai_api_key:apiIn.value}) }); _toast("API key saved"); apiIn.value=""; };
-  clearApi.onclick = async () => { if(!confirm("Remove API key?")) return; await _api("/civitai/settings", { method:"POST", body:JSON.stringify({civitai_api_key:""}) }); _toast("API key cleared"); };
-  saveHf.onclick = async () => { await _api("/civitai/settings", { method:"POST", body:JSON.stringify({hf_token:hfIn.value}) }); _toast("HF token saved"); hfIn.value=""; };
-  clearHf.onclick = async () => { if(!confirm("Remove HF token?")) return; await _api("/civitai/settings", { method:"POST", body:JSON.stringify({hf_token:""}) }); _toast("HF token cleared"); };
-  baseSel.onchange = async () => { await _api("/civitai/settings", { method:"POST", body:JSON.stringify({network_choice:baseSel.value==="civitai.work"?"work":"com"}) }); _toast("Base URL updated"); };
-  cbMeta.onchange = async () => { await _api("/civitai/settings",{ method:"POST",body:JSON.stringify({save_metadata:cbMeta.checked}) }); };
-  cbPrev.onchange = async () => { await _api("/civitai/settings",{ method:"POST",body:JSON.stringify({save_preview:cbPrev.checked}) }); };
+  // ---- Show/Hide toggles ----
+  apiShowBtn.onclick = function() {
+    if (apiIn.type === "password") { apiIn.type = "text"; apiShowBtn.textContent = "\uD83D\uDE48  Hide"; }
+    else { apiIn.type = "password"; apiShowBtn.textContent = "\uD83D\uDC41  Show"; }
+  };
+  hfShowBtn.onclick = function() {
+    if (hfIn.type === "password") { hfIn.type = "text"; hfShowBtn.textContent = "\uD83D\uDE48  Hide"; }
+    else { hfIn.type = "password"; hfShowBtn.textContent = "\uD83D\uDC41  Show"; }
+  };
+
+  // ---- Save API key ----
+  apiSaveBtn.onclick = function() {
+    var v = apiIn.value.trim();
+    if (!v) {     apiStatus.innerHTML = "<span style='color:#e88'>Paste a token first, or click Clear to remove.</span>"; return; }
+    apiSaveBtn.disabled = true; apiClearBtn.disabled = true;
+    apiStatus.innerHTML = "<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";
+    _api("/civitai/settings", { method:"POST", body:JSON.stringify({api_key:v}) }).then(function(r) {
+      apiIn.value = "";
+      apiStatus.innerHTML = r.has_api_key
+        ? "<span style='color:#9c9'>\u25CF API key saved.</span>"
+        : "<span style='color:#cc9'>\u25CB API key cleared.</span>";
+      apiHint.innerHTML = r.has_api_key
+        ? "<span style='color:#9c9'>\u25CF API key present</span>"
+        : "<span style='color:#c99'>\u25CB No API key set \u2014 public models only</span>";
+    }).catch(function(e) { apiStatus.innerHTML = "<span style='color:#e88'>Error: " + e.message + "</span>"; })
+    .then(function() { apiSaveBtn.disabled = false; apiClearBtn.disabled = false; });
+  };
+  apiClearBtn.onclick = function() {
+    if (!confirm("Remove the saved Civitai API key?")) return;
+    apiSaveBtn.disabled = true; apiClearBtn.disabled = true;
+    apiStatus.innerHTML = "<span style='color:var(--civ-text-mute)'>Clearing\u2026</span>";
+    _api("/civitai/settings", { method:"POST", body:JSON.stringify({api_key:""}) }).then(function(r) {
+      apiIn.value = "";
+      apiStatus.innerHTML = "<span style='color:#cc9'>\u25CB API key cleared.</span>";
+      apiHint.innerHTML = "<span style='color:#c99'>\u25CB No API key set \u2014 public models only</span>";
+    }).catch(function(e) { apiStatus.innerHTML = "<span style='color:#e88'>Error: " + e.message + "</span>"; })
+    .then(function() { apiSaveBtn.disabled = false; apiClearBtn.disabled = false; });
+  };
+  apiIn.onkeydown = function(e) { if (e.key === "Enter") apiSaveBtn.click(); };
+
+  // ---- Save HF token ----
+  hfSaveBtn.onclick = function() {
+    var v = hfIn.value.trim();
+    if (!v) { hfStatus.innerHTML = "<span style='color:#e88'>Paste a token first.</span>"; return; }
+    hfSaveBtn.disabled = true; hfClearBtn.disabled = true;
+    hfStatus.innerHTML = "<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";
+    _api("/civitai/hf/token", { method:"POST", body:JSON.stringify({token:v}) }).then(function(r) {
+      hfIn.value = "";
+      hfStatus.innerHTML = r.has_token
+        ? "<span style='color:#9c9'>\u25CF HF token saved.</span>"
+        : "<span style='color:#cc9'>\u25CB HF token cleared.</span>";
+      hfHint.innerHTML = r.has_token
+        ? "<span style='color:#9c9'>\u25CF HF token present</span>"
+        : "<span style='color:#c99'>\u25CB No HF token \u2014 public repos only</span>";
+    }).catch(function(e) { hfStatus.innerHTML = "<span style='color:#e88'>Error: " + e.message + "</span>"; })
+    .then(function() { hfSaveBtn.disabled = false; hfClearBtn.disabled = false; });
+  };
+  hfClearBtn.onclick = function() {
+    if (!confirm("Remove the saved Hugging Face token?")) return;
+    hfSaveBtn.disabled = true; hfClearBtn.disabled = true;
+    hfStatus.innerHTML = "<span style='color:var(--civ-text-mute)'>Clearing\u2026</span>";
+    _api("/civitai/hf/token", { method:"POST", body:JSON.stringify({token:""}) }).then(function(r) {
+      hfIn.value = "";
+      hfStatus.innerHTML = "<span style='color:#cc9'>\u25CB HF token cleared.</span>";
+      hfHint.innerHTML = "<span style='color:#c99'>\u25CB No HF token \u2014 public repos only</span>";
+    }).catch(function(e) { hfStatus.innerHTML = "<span style='color:#e88'>Error: " + e.message + "</span>"; })
+    .then(function() { hfSaveBtn.disabled = false; hfClearBtn.disabled = false; });
+  };
+  hfIn.onkeydown = function(e) { if (e.key === "Enter") hfSaveBtn.click(); };
+
+  // ---- Save preferences ----
+  saveBtn.onclick = function() {
+    saveBtn.disabled = true;
+    sStatus.textContent = "Saving\u2026";
+    var body = {
+      network_choice: baseSel.value === "civitai.red" ? "red" : baseSel.value === "civitai.com" ? "com" : baseSel.value,
+      save_metadata: cbMeta.checked,
+      save_preview: cbPrev.checked,
+      verify_sha256: cbHash.checked,
+      nsfw_blur: cbNsfwBlur.checked,
+    };
+    _api("/civitai/settings", { method:"POST", body:JSON.stringify(body) }).then(function() {
+      sStatus.textContent = "Preferences saved.";
+      _toast("Settings saved", "ok");
+    }).catch(function(e) { sStatus.textContent = "Error: " + e.message; })
+    .then(function() { saveBtn.disabled = false; });
+  };
+
+  // ---- Test connection ----
+  testBtn.onclick = function() {
+    sStatus.textContent = "Testing\u2026";
+    _api("/civitai/ping").then(function(r) {
+      sStatus.innerHTML = r.has_api_key
+        ? "<span style='color:#9c9'>OK \u2014 API key recognised.</span>"
+        : "<span style='color:#cc9'>OK \u2014 but no API key (private models unavailable).</span>";
+    }).catch(function(e) { sStatus.innerHTML = "<span style='color:#e88'>Error: " + e.message + "</span>"; });
+  };
+
+  // ---- Clear cache ----
+  clearCacheBtn.onclick = function() {
+    clearCacheBtn.disabled = true;
+    _api("/civitai/cache/clear", { method:"POST" }).then(function(r) {
+      _cache.clear();
+      _toast("Cleared cache (" + (r.cleared_responses||0) + " entries, " + (r.cleared_images||0) + " images).");
+      sStatus.textContent = "Cache cleared.";
+    }).catch(function(e) { _toast("Cache clear failed: " + e.message, "error"); })
+    .then(function() { clearCacheBtn.disabled = false; });
+  };
 }
 
-// =====================================================================
-// 6. MOUNT
-// =====================================================================
-let _mountState = { mounted: false, ui: null };
-
-function mount() {
-  if (_mountState.mounted) return;
-  if (!app.extensionManager?.registerSidebarTab) return false;
-
-  app.extensionManager.registerSidebarTab({
-    id: "civitai-hf",
-    icon: "pi pi-globe",
-    title: "Civitai+HF",
-    tooltip: "Civitai & Hugging Face Downloader",
-    type: "custom",
-    render: (root) => {
-      root.innerHTML = "";
-      const { root: ui, tabBar, panes } = buildUI();
-      _mountState.ui = { tabBar, panes };
-      root.appendChild(ui);
-    },
-  });
-  _mountState.mounted = true;
-  return true;
-}
-
+// ── 6. MOUNT ─────────────────────────────────────────────────────────
 app.registerExtension({
   name: "CivitaiHF.Browser",
-  async setup() {
-    if (mount()) return;
-    let tries = 0;
-    const t = setInterval(() => { if (mount() || ++tries > 20) clearInterval(t); }, 250);
+  setup: function() {
+    (function tryMount() {
+      if (app.extensionManager && app.extensionManager.registerSidebarTab) {
+        app.extensionManager.registerSidebarTab({
+          id: "civitai-hf",
+          icon: "pi pi-globe",
+          title: "Civitai+HF",
+          tooltip: "Civitai & Hugging Face Downloader",
+          type: "custom",
+          render: function(root) {
+            root.innerHTML = "";
+            root.appendChild(buildUI());
+          },
+        });
+        return true;
+      }
+      return false;
+    })() || setTimeout(function() {
+      (function tryMount() {
+        if (app.extensionManager && app.extensionManager.registerSidebarTab) {
+          app.extensionManager.registerSidebarTab({
+            id: "civitai-hf",
+            icon: "pi pi-globe",
+            title: "Civitai+HF",
+            tooltip: "Civitai & Hugging Face Downloader",
+            type: "custom",
+            render: function(root) {
+              root.innerHTML = "";
+              root.appendChild(buildUI());
+            },
+          });
+          return true;
+        }
+        return false;
+      })();
+    }, 2000);
   },
 });

@@ -6,6 +6,8 @@ import re
 import urllib.request
 import urllib.parse
 import hashlib
+from datetime import datetime
+import requests
 import folder_paths
 from aiohttp import web
 from server import PromptServer
@@ -21,19 +23,41 @@ routes = PromptServer.instance.routes
 async def search_civitai(request):
     try:
         query = request.query.get("query", "")
-        model_type = request.query.get("type", "")
-        sort = request.query.get("sort", "Newest")
+        model_type = request.query.get("types", "") or request.query.get("type", "")
+        sort = request.query.get("sort", "Highest Rated")
         page = int(request.query.get("page", 1))
         nsfw = request.query.get("nsfw", "false")
-        limit = 20
+        limit = int(request.query.get("limit", 20))
+        period = request.query.get("period", "")
+        base_models = request.query.get("baseModels", "")
+        username = request.query.get("username", "")
+        tag = request.query.get("tag", "")
+        cursor = request.query.get("cursor", "")
         domain = utils._get_active_domain()
-        params = {"limit": limit, "page": page, "sort": sort}
+
+        params = {"limit": min(limit, 100)}
+
         if query:
             params["query"] = query
-        if model_type:
+        if cursor:
+            params["cursor"] = cursor
+        elif not query and not cursor:
+            params["page"] = page
+        if model_type and model_type.lower() != "any":
             params["types"] = model_type
-        if nsfw == "true":
-            params["nsfw"] = "true"
+        if nsfw:
+            params["nsfw"] = nsfw
+        if sort and sort.lower() != "relevancy":
+            params["sort"] = sort
+        if period:
+            params["period"] = period
+        if base_models:
+            params["baseModels"] = [b.strip() for b in base_models.split(",") if b.strip()]
+        if username:
+            params["username"] = username
+        if tag:
+            params["tag"] = tag
+
         resp = utils.CivitaiAPIUtils._request_with_retry(
             f"https://{domain}/api/v1/models", params=params
         )
@@ -41,6 +65,50 @@ async def search_civitai(request):
         return web.json_response(data)
     except Exception as e:
         return web.json_response({"items": [], "total": 0, "error": str(e)})
+
+
+@routes.get("/civitai/lookup")
+async def lookup_civitai(request):
+    try:
+        hash_val = request.query.get("hash", "")
+        version_id = request.query.get("version_id", "")
+        model_id = request.query.get("model_id", "")
+        model_input = request.query.get("model", "")
+        domain = utils._get_active_domain()
+
+        if hash_val:
+            info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(hash_val.strip())
+            if not info:
+                return web.json_response({"error": "Not found on Civitai"}, status=404)
+            return web.json_response({"kind": "version", "data": info})
+
+        if version_id:
+            info = utils.CivitaiAPIUtils.get_model_version_info_by_id(int(version_id), domain)
+            if not info:
+                return web.json_response({"error": "Not found on Civitai"}, status=404)
+            return web.json_response({"kind": "version", "data": info})
+
+        if model_id:
+            info = utils.CivitaiAPIUtils.get_model_info_by_id(int(model_id), domain)
+            if not info:
+                return web.json_response({"error": "Not found on Civitai"}, status=404)
+            return web.json_response({"kind": "model", "data": info})
+
+        if model_input:
+            parsed = utils.parse_civitai_input(model_input.strip())
+            if parsed.get("version_id"):
+                info = utils.CivitaiAPIUtils.get_model_version_info_by_id(parsed["version_id"], domain)
+                if info:
+                    return web.json_response({"kind": "version", "data": info})
+            if parsed.get("model_id"):
+                info = utils.CivitaiAPIUtils.get_model_info_by_id(parsed["model_id"], domain)
+                if info:
+                    return web.json_response({"kind": "model", "data": info})
+            return web.json_response({"error": "Could not parse the input or not found"}, status=400)
+
+        return web.json_response({"error": "Provide one of: hash, version_id, model_id, model"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 @routes.get("/civitai/model-detail")
@@ -54,6 +122,84 @@ async def model_detail(request):
         return web.json_response(data or {})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.get("/civitai/model/{model_id}")
+async def model_by_id(request):
+    try:
+        model_id = request.match_info.get("model_id")
+        if not model_id:
+            return web.json_response({"error": "Missing model_id"}, status=400)
+        domain = utils._get_active_domain()
+        data = utils.CivitaiAPIUtils.get_model_info_by_id(int(model_id), domain)
+        return web.json_response(data or {})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.get("/civitai/local-preview")
+async def local_preview(request):
+    try:
+        path = request.query.get("path", "")
+        w = request.query.get("w", "")
+        if not path or ".." in path:
+            return web.Response(status=400, text="Invalid path")
+        if not os.path.isabs(path):
+            path = os.path.join(folder_paths.models_dir, path)
+        if not os.path.isfile(path):
+            return web.Response(status=404, text="Not found")
+        ext = os.path.splitext(path)[1].lower()
+        ct = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
+        # Resize if w param provided and PIL available
+        if w and w.isdigit():
+            try:
+                from PIL import Image
+                import io
+                max_w = int(w)
+                loop = asyncio.get_event_loop()
+                img_bytes = await loop.run_in_executor(None, _resize_preview, path, max_w, ext)
+                return web.Response(body=img_bytes, content_type=ct,
+                                    headers={"Cache-Control": "public, max-age=86400"})
+            except Exception:
+                pass  # fall through to full file
+        # Check file mtime for conditional requests
+        mtime = os.path.getmtime(path)
+        ims = request.headers.get("If-Modified-Since")
+        if ims:
+            try:
+                dt = datetime.strptime(ims, "%a, %d %b %Y %H:%M:%S %Z")
+                if mtime <= dt.timestamp():
+                    return web.Response(status=304)
+            except Exception:
+                pass
+        return web.FileResponse(
+            path,
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "Last-Modified": datetime.utcfromtimestamp(mtime).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            }
+        )
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
+
+
+def _resize_preview(path, max_w, ext):
+    from PIL import Image
+    import io
+    img = Image.open(path)
+    img.load()
+    if img.width > max_w:
+        ratio = max_w / img.width
+        new_h = int(img.height * ratio)
+        img = img.resize((max_w, new_h), Image.LANCZOS)
+    out = io.BytesIO()
+    save_kw = {"format": "PNG" if ext == ".png" else "WEBP"}
+    if ext != ".png":
+        save_kw["format"] = "WEBP"
+        save_kw["quality"] = 85
+    img.save(out, **save_kw)
+    return out.getvalue()
 
 
 @routes.get("/civitai/model-versions")
@@ -115,12 +261,39 @@ async def start_download(request):
     try:
         data = await request.json()
         download_url = data.get("url")
-        model_type = data.get("type", "loras")
-        filename = data.get("filename", "model.safetensors")
+        model_version_id = data.get("model_version_id")
+        model_type = data.get("save_as") or data.get("type", "")
+        filename = data.get("filename") or "model.safetensors"
         subfolder = data.get("subfolder", "")
+        overwrite = data.get("overwrite", False)
+        save_metadata = data.get("save_metadata", False)
+        save_preview = data.get("save_preview", False)
+        metadata_only = data.get("metadata_only", False)
+
+        domain = utils._get_active_domain()
+
+        if model_version_id and not download_url:
+            download_url = f"https://{domain}/api/download/models/{model_version_id}"
 
         if not download_url:
-            return web.json_response({"error": "Missing url"}, status=400)
+            return web.json_response({"error": "Missing url or model_version_id"}, status=400)
+
+        # Resolve "auto" folder — fetch version info to determine type
+        if not model_type or model_type == "auto":
+            try:
+                vi = utils.CivitaiAPIUtils.get_model_version_info_by_id(
+                    int(model_version_id), domain
+                ) if model_version_id else None
+                if vi:
+                    civitai_type = (vi.get("model") or {}).get("type", "")
+                    model_type = {
+                        "Checkpoint": "checkpoints", "LORA": "loras", "LoCon": "loras",
+                        "DoRA": "loras", "VAE": "vae", "Controlnet": "controlnet",
+                        "TextualInversion": "embeddings", "Hypernetwork": "hypernetworks",
+                        "Upscaler": "upscale_models", "MotionModule": "animatediff_models",
+                    }.get(civitai_type, "other")
+            except Exception:
+                model_type = "loras"
 
         models_dir = folder_paths.models_dir
         type_dir = model_type
@@ -130,6 +303,17 @@ async def start_download(request):
             save_dir = os.path.join(models_dir, type_dir)
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, filename)
+        if os.path.isdir(save_path):
+            fallback_name = filename.strip() or "model.safetensors"
+            save_path = os.path.join(save_dir, fallback_name)
+            filename = fallback_name
+
+        # For metadata-only jobs, just fetch & save metadata then return
+        if metadata_only:
+            asyncio.ensure_future(_save_metadata_and_preview(
+                model_version_id, save_path, save_metadata, save_preview, domain
+            ))
+            return web.json_response({"task_id": "meta_" + str(model_version_id)})
 
         task_id = f"dl_{int(time.time())}_{hashlib.md5(download_url.encode()).hexdigest()[:8]}"
         DOWNLOAD_TASKS[task_id] = {
@@ -140,6 +324,7 @@ async def start_download(request):
         }
 
         async def _download():
+            nonlocal filename, save_path
             try:
                 req = urllib.request.Request(
                     download_url,
@@ -147,6 +332,17 @@ async def start_download(request):
                 )
                 with urllib.request.urlopen(req, timeout=300) as resp:
                     total = int(resp.headers.get("Content-Length", 0))
+                    # Try to get real filename from Content-Disposition
+                    cd = resp.headers.get("Content-Disposition", "")
+                    if cd:
+                        m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\n]+)', cd)
+                        if m:
+                            real_name = urllib.parse.unquote(m.group(1))
+                            if real_name and real_name != filename:
+                                filename = real_name
+                                save_path = os.path.join(save_dir, filename)
+                                if task_id in DOWNLOAD_TASKS:
+                                    DOWNLOAD_TASKS[task_id].update({"filename": filename, "path": save_path})
                     downloaded = 0
                     start_t = time.time()
                     with open(save_path, "wb") as f:
@@ -169,18 +365,99 @@ async def start_download(request):
                                     "progress": progress, "speed": speed,
                                     "downloaded": downloaded, "total": total,
                                 })
-                    if task_id in DOWNLOAD_TASKS:
-                        DOWNLOAD_TASKS[task_id]["status"] = "completed"
-                        DOWNLOAD_TASKS[task_id]["progress"] = 100
+                if task_id in DOWNLOAD_TASKS:
+                    DOWNLOAD_TASKS[task_id]["status"] = "completed"
+                    DOWNLOAD_TASKS[task_id]["progress"] = 100
+                # Fetch and save metadata / preview after download
+                if save_metadata or save_preview:
+                    await _save_metadata_and_preview(
+                        model_version_id, save_path, save_metadata, save_preview, domain
+                    )
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
                     DOWNLOAD_TASKS[task_id]["error"] = str(e)
 
         asyncio.ensure_future(_download())
-        return web.json_response({"task_id": task_id})
+        return web.json_response({"task_id": task_id, "filename": filename})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def _save_metadata_and_preview(model_version_id, save_path, save_metadata, save_preview, domain):
+    """Fetch Civitai version info and save .civitai.json + all preview images."""
+    try:
+        vi = utils.CivitaiAPIUtils.get_model_version_info_by_id(
+            int(model_version_id), domain
+        )
+        if not vi:
+            return
+    except Exception:
+        return
+
+    base = os.path.splitext(save_path)[0]
+    loop = asyncio.get_event_loop()
+
+    # Enrich metadata with model description from parent model if available
+    if save_metadata:
+        meta_path = base + ".civitai.json"
+        if not os.path.isfile(meta_path):
+            try:
+                # Fetch model info too for full description
+                model_id = vi.get("modelId") or (vi.get("model") or {}).get("id")
+                if model_id:
+                    try:
+                        mresp = utils.CivitaiAPIUtils._request_with_retry(
+                            f"https://{domain}/api/v1/models/{model_id}"
+                        )
+                        model_data = mresp.json()
+                        # Merge model-level description into version info
+                        if "model" not in vi:
+                            vi["model"] = model_data
+                        else:
+                            vi["model"]["description"] = model_data.get("description", "")
+                            vi["model"]["name"] = model_data.get("name", "")
+                    except Exception:
+                        pass
+                await loop.run_in_executor(None, _write_json, meta_path, vi)
+            except Exception:
+                pass
+
+    # Download all preview images with their prompts in filenames
+    if save_preview:
+        images = vi.get("images", [])
+        dl_tasks = []
+        for idx, img in enumerate(images):
+            img_url = img.get("url", "") if isinstance(img, dict) else ""
+            if not img_url:
+                continue
+            # Number images starting from 1; first image keeps base name for compatibility
+            if idx == 0:
+                img_path = base + ".png"
+            else:
+                img_path = f"{base}_{idx + 1}.png"
+            if os.path.isfile(img_path):
+                continue
+            dl_tasks.append((img_url, img_path))
+        if dl_tasks:
+            await asyncio.gather(*[
+                loop.run_in_executor(None, _download_file, url, p)
+                for url, p in dl_tasks
+            ])
+
+
+def _write_json(path, data):
+    import json
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _download_file(url, path):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        with open(path, "wb") as f:
+            f.write(resp.read())
 
 
 @routes.get("/civitai/downloads")
@@ -210,11 +487,24 @@ async def local_models(request):
         force = request.query.get("force_refresh", "false").lower() == "true"
         loop = asyncio.get_event_loop()
         models = await loop.run_in_executor(
-            None, utils.get_all_local_models_with_details, force
+            None, utils.scan_local_models_direct
         )
+        # Fire background DB sync if force_refresh so next load has hashes
+        if force:
+            asyncio.ensure_future(_bg_local_sync())
         return web.json_response({"models": models, "total": len(models)})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def _bg_local_sync():
+    """Sync local files with DB in background — doesn't block the response."""
+    try:
+        loop = asyncio.get_event_loop()
+        for mt in utils.SUPPORTED_MODEL_TYPES:
+            await loop.run_in_executor(None, utils.sync_local_files_with_db, mt, True)
+    except Exception:
+        pass
 
 
 @routes.post("/civitai/rescan")
@@ -239,13 +529,32 @@ async def delete_model(request):
         model_path = data.get("path")
         if not model_path or not os.path.exists(model_path):
             return web.json_response({"error": "File not found"}, status=404)
+        base = os.path.splitext(model_path)[0]
+        model_dir = os.path.dirname(model_path)
+
+        # Remove model file
         os.remove(model_path)
-        sidecar = model_path.replace(".safetensors", ".civitai.json")
+
+        # Remove sidecar .civitai.json
+        sidecar = base + ".civitai.json"
         if os.path.exists(sidecar):
             os.remove(sidecar)
-        preview = model_path.replace(".safetensors", ".preview.png")
-        if os.path.exists(preview):
-            os.remove(preview)
+
+        # Remove all preview images (numbered variants)
+        for fname in os.listdir(model_dir):
+            fpath = os.path.join(model_dir, fname)
+            if os.path.isfile(fpath) and fname.startswith(os.path.basename(base)):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in (".png", ".jpg", ".jpeg", ".webp"):
+                    os.remove(fpath)
+
+        # Remove parent folder if empty
+        try:
+            if not os.listdir(model_dir):
+                os.rmdir(model_dir)
+        except Exception:
+            pass
+
         return web.json_response({"success": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -435,11 +744,28 @@ async def auto_organize(request):
 async def hf_search(request):
     try:
         query = request.query.get("query", "")
-        task = request.query.get("task", "text-to-image")
+        pipeline_tag = request.query.get("pipeline_tag", "")
+        library = request.query.get("library", "")
+        author = request.query.get("author", "")
         sort = request.query.get("sort", "lastModified")
-        limit = int(request.query.get("limit", 20))
+        direction = request.query.get("direction", "-1")
+        limit = int(request.query.get("limit", 30))
+        tags = request.query.get("tags", "")
+        gated = request.query.get("gated", "")
+
         hf_url = "https://huggingface.co/api/models"
-        params = {"search": query, "task": task, "sort": sort, "limit": limit}
+        params = {"search": query, "sort": sort, "direction": direction, "limit": limit}
+        if pipeline_tag:
+            params["task"] = pipeline_tag
+        if library:
+            params["library"] = library
+        if author:
+            params["author"] = author
+        if tags:
+            params["filter"] = tags
+        if gated.lower() in ("true", "false"):
+            params["gated"] = gated.lower()
+
         headers = {"User-Agent": "Mozilla/5.0"}
         token = utils.db_manager.get_setting("hf_token", "")
         if token:
@@ -450,6 +776,31 @@ async def hf_search(request):
         return web.json_response({"items": items, "total": len(items)})
     except Exception as e:
         return web.json_response({"items": [], "error": str(e)})
+
+
+@routes.get("/civitai/hf-lookup")
+async def hf_lookup(request):
+    try:
+        repo_id = request.query.get("repo", "")
+        if not repo_id:
+            return web.json_response({"error": "Missing repo"}, status=400)
+        if repo_id.find("/") < 0:
+            return web.json_response({"error": "Invalid repo format (use user/repo)"}, status=400)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        token = utils.db_manager.get_setting("hf_token", "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        api_url = f"https://huggingface.co/api/models/{repo_id}"
+        resp = requests.get(api_url, timeout=15, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        return web.json_response(data)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            return web.json_response({"error": "Repo not found"}, status=404)
+        return web.json_response({"error": f"HTTP {e.response.status_code}"}, status=e.response.status_code)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 @routes.get("/civitai/hf-files")
@@ -473,12 +824,6 @@ async def hf_files(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-try:
-    import requests
-except ImportError:
-    pass
-
-
 # ── Settings ──────────────────────────────────────────────────────────
 
 @routes.get("/civitai/settings")
@@ -488,10 +833,11 @@ async def get_settings(request):
         "saveMetadata": utils.db_manager.get_setting("save_metadata", True),
         "savePreview": utils.db_manager.get_setting("save_preview", True),
         "computeSHA": utils.db_manager.get_setting("compute_sha", True),
-        "bypassNSFW": utils.db_manager.get_setting("bypass_nsfw", False),
+        "nsfw_default": utils.db_manager.get_setting("nsfw_default", ""),
         "civitaiToken": bool(utils.db_manager.get_setting("civitai_api_key")),
         "hfToken": bool(utils.db_manager.get_setting("hf_token")),
         "network_choice": utils.db_manager.get_setting("network_choice", "com"),
+        "nsfw_blur": utils.db_manager.get_setting("nsfw_blur", True),
     })
 
 
@@ -500,8 +846,8 @@ async def save_settings(request):
     try:
         data = await request.json()
         for key in [
-            "save_metadata", "save_preview", "compute_sha", "bypass_nsfw",
-            "network_choice",
+            "save_metadata", "save_preview", "compute_sha", "nsfw_default",
+            "network_choice", "nsfw_blur",
         ]:
             if key in data:
                 utils.db_manager.set_setting(key, data[key])
@@ -606,3 +952,178 @@ async def model_info(request):
 
 
 print("[ComfyUI-CivitAiHF-Downloader] Server routes registered")
+
+
+# ── Missing utility endpoints ───────────────────────────────────────────
+
+@routes.get("/civitai/folders")
+async def list_folders(request):
+    try:
+        folders = []
+        for sub in ["checkpoints", "loras", "vae", "controlnet", "embeddings",
+                     "upscale_models", "clip_vision", "unet", "diffusion_models",
+                     "instantid", "ipadapter", "photomaker", "style_models",
+                     "text_encoders", "wildcards"]:
+            sub_path = os.path.join(folder_paths.models_dir, sub)
+            if os.path.isdir(sub_path):
+                folders.append(sub)
+        return web.json_response({"folders": folders})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.post("/civitai/hf/download")
+async def hf_download(request):
+    try:
+        body = await request.json()
+        repo_id = body.get("repo_id", "")
+        revision = body.get("revision", "main")
+        path = body.get("path", "")
+        save_as = body.get("save_as", "auto")
+        subfolder = body.get("subfolder", "")
+        overwrite = body.get("overwrite", False)
+        save_metadata = body.get("save_metadata", False)
+        save_preview = body.get("save_preview", False)
+        if not repo_id or not path:
+            return web.json_response({"error": "Missing repo_id or path"}, status=400)
+        filename = path.split("/")[-1]
+        dest_dir = os.path.join(folder_paths.models_dir, save_as if save_as != "auto" else "loras")
+        if subfolder:
+            dest_dir = os.path.join(dest_dir, subfolder)
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, filename)
+        if os.path.exists(dest) and not overwrite:
+            return web.json_response({"error": "File exists", "path": dest}, status=409)
+        url = f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(path, safe='/')}"
+        task_id = f"hf_{int(time.time())}_{hashlib.md5(f'{repo_id}:{path}'.encode()).hexdigest()[:8]}"
+        DOWNLOAD_TASKS[task_id] = {
+            "id": task_id, "url": url, "filename": filename,
+            "source": "hf", "hf_repo_id": repo_id, "hf_path": path,
+            "progress": 0, "speed": 0, "status": "downloading",
+            "path": dest, "cancelled": False, "started_at": time.time(),
+        }
+
+        async def _hf_dl():
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=600) as resp:
+                    total = int(resp.headers.get("Content-Length", 0))
+                    downloaded = 0
+                    start_t = time.time()
+                    with open(dest, "wb") as f:
+                        while True:
+                            if DOWNLOAD_TASKS.get(task_id, {}).get("cancelled"):
+                                DOWNLOAD_TASKS[task_id]["status"] = "cancelled"
+                                if os.path.exists(dest):
+                                    os.remove(dest)
+                                return
+                            chunk = resp.read(8192)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            elapsed = time.time() - start_t
+                            speed = downloaded / elapsed if elapsed > 0 else 0
+                            progress = int(downloaded / total * 100) if total > 0 else 0
+                            if task_id in DOWNLOAD_TASKS:
+                                DOWNLOAD_TASKS[task_id].update({
+                                    "progress": progress, "speed": speed,
+                                    "downloaded": downloaded, "total": total,
+                                })
+                if task_id in DOWNLOAD_TASKS:
+                    DOWNLOAD_TASKS[task_id]["status"] = "completed"
+                    DOWNLOAD_TASKS[task_id]["progress"] = 100
+            except Exception as e:
+                if task_id in DOWNLOAD_TASKS:
+                    DOWNLOAD_TASKS[task_id]["status"] = "error"
+                    DOWNLOAD_TASKS[task_id]["error"] = str(e)
+
+        asyncio.ensure_future(_hf_dl())
+        return web.json_response({"id": task_id, "filename": filename, "dest": dest})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.post("/civitai/hf/token")
+async def set_hf_token(request):
+    try:
+        body = await request.json()
+        token = body.get("token", "")
+        utils.db_manager.set_setting("hf_token", token)
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.get("/civitai/ping")
+async def ping(request):
+    domain = utils._get_active_domain()
+    try:
+        r = requests.get(f"https://{domain}/api/v1/models?limit=1", timeout=10)
+        return web.json_response({"ok": r.ok, "status": r.status_code, "domain": domain})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e), "domain": domain})
+
+
+@routes.post("/civitai/cache/clear")
+async def clear_cache_v2(request):
+    try:
+        utils.db_manager.clear_analysis_cache()
+        return web.json_response({"ok": True, "message": "Cache cleared"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.get("/civitai/local-previews")
+async def get_local_previews(request):
+    """Return all preview images + per-image prompts for a local model."""
+    try:
+        path = request.query.get("path", "")
+        if not path or ".." in path:
+            return web.json_response({"images": []})
+        if not os.path.isabs(path):
+            path = os.path.join(folder_paths.models_dir, path)
+        base = os.path.splitext(path)[0]
+        # Load metadata for prompts
+        json_path = base + ".civitai.json"
+        images_meta = []
+        if os.path.isfile(json_path):
+            try:
+                with open(json_path) as f:
+                    meta = json.load(f)
+                images_meta = meta.get("images", [])
+            except Exception:
+                pass
+        # Find all numbered preview files matching base + .png/.jpg/.webp
+        exts = [".png", ".jpg", ".jpeg", ".webp"]
+        previews = []
+        for idx in range(20):  # up to 20 previews
+            suffix = "" if idx == 0 else f"_{idx + 1}"
+            found = None
+            for ext in exts:
+                candidate = base + suffix + ext
+                if os.path.isfile(candidate):
+                    found = candidate
+                    break
+            if not found:
+                if idx == 0:
+                    continue
+                break
+            meta = images_meta[idx] if idx < len(images_meta) and isinstance(images_meta[idx], dict) else {}
+            m = meta.get("meta") or {}
+            m = m if isinstance(m, dict) else {}
+            import urllib.parse
+            previews.append({
+                "url": f"/civitai/local-preview?path={urllib.parse.quote(os.path.abspath(found))}&w=300",
+                "prompt": m.get("prompt", ""),
+                "negativePrompt": m.get("negativePrompt", ""),
+                "seed": m.get("seed", ""),
+                "width": m.get("width", ""),
+                "height": m.get("height", ""),
+            })
+        return web.json_response({"images": previews})
+    except Exception as e:
+        return web.json_response({"images": [], "error": str(e)})
+
+
+print("[ComfyUI-CivitAiHF-Downloader] Extra routes registered")
