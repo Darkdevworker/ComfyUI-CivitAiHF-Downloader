@@ -1,3 +1,8 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ComfyUI-CivitAiHF-Downloader — Noir Premium Theme
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. CSS Custom Properties ────────────────────────────────────────────── */
 :root {
   --civ-bg-0: #000000;
   --civ-bg-1: #0a0a0a;
@@ -28,6 +33,7 @@
   --civ-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* ── 2. Root Container ──────────────────────────────────────────────────── */
 .cvt-root {
   display: flex; flex-direction: column;
   height: 100%; min-height: 0;
@@ -51,6 +57,47 @@
   opacity: .30;
 }
 
+/* ── 3. Global Scrollbar ────────────────────────────────────────────────── */
+.cvt-pane::-webkit-scrollbar,
+.cvt-modal .gallery::-webkit-scrollbar,
+.cvt-gen-panel::-webkit-scrollbar,
+.cvt-files-list::-webkit-scrollbar,
+.cvt-local-list::-webkit-scrollbar,
+.cvt-prompt-text::-webkit-scrollbar,
+.cvt-prompt-box::-webkit-scrollbar {
+  width: 8px; height: 8px;
+}
+.cvt-pane::-webkit-scrollbar-track,
+.cvt-modal .gallery::-webkit-scrollbar-track,
+.cvt-gen-panel::-webkit-scrollbar-track,
+.cvt-files-list::-webkit-scrollbar-track,
+.cvt-local-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cvt-pane::-webkit-scrollbar-thumb,
+.cvt-modal .gallery::-webkit-scrollbar-thumb,
+.cvt-gen-panel::-webkit-scrollbar-thumb,
+.cvt-files-list::-webkit-scrollbar-thumb,
+.cvt-local-list::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.10);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background .25s var(--civ-ease-out);
+}
+.cvt-pane::-webkit-scrollbar-thumb:hover,
+.cvt-modal .gallery::-webkit-scrollbar-thumb:hover,
+.cvt-gen-panel::-webkit-scrollbar-thumb:hover,
+.cvt-files-list::-webkit-scrollbar-thumb:hover,
+.cvt-local-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,.18);
+}
+.cvt-pane::-webkit-scrollbar-corner,
+.cvt-modal .gallery::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── 4. Tab Bar ─────────────────────────────────────────────────────────── */
 .cvt-tabs {
   display: flex; gap: 4px;
   padding: 8px 8px 6px;
@@ -90,6 +137,10 @@
   transform: translateY(-1px);
 }
 
+.cvt-tab:active {
+  transform: translateY(0) scale(0.97);
+}
+
 .cvt-tab.active {
   color: var(--civ-accent);
   background: rgba(255,255,255,0.08);
@@ -103,6 +154,21 @@
   transform: translateX(-50%) scaleX(1);
 }
 
+/* ── 5. Tab Emoji ───────────────────────────────────────────────────────── */
+.tab-emoji {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+  margin-right: 2px;
+  transition: transform .35s var(--civ-spring);
+}
+
+.cvt-tab:hover .tab-emoji {
+  transform: scale(1.15);
+}
+
+/* ── 6. Panes ───────────────────────────────────────────────────────────── */
 .cvt-pane {
   flex: 1; min-height: 0;
   overflow: auto; padding: 12px;
@@ -115,22 +181,13 @@
   animation: cvt-pane-enter .30s var(--civ-ease-out);
 }
 
+/* ── 7. Pane Animations ─────────────────────────────────────────────────── */
 @keyframes cvt-pane-enter {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.cvt-pane::-webkit-scrollbar { width: 8px; height: 8px; }
-.cvt-pane::-webkit-scrollbar-track { background: transparent; }
-.cvt-pane::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,.10);
-  border-radius: 8px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-  transition: background .25s var(--civ-ease-out);
-}
-.cvt-pane::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.18); }
-
+/* ── 8. Searchbar ───────────────────────────────────────────────────────── */
 .cvt-searchbar {
   display: flex; flex-direction: column; gap: 8px;
   position: sticky; top: -12px; z-index: 3;
@@ -142,8 +199,10 @@
   border-bottom: 1px solid var(--civ-line);
 }
 
-.cvt-searchbar input, .cvt-searchbar select,
-.cvt-modal input, .cvt-modal select {
+.cvt-searchbar input,
+.cvt-searchbar select,
+.cvt-modal input,
+.cvt-modal select {
   background: rgba(255,255,255,0.04);
   color: var(--civ-text);
   border: 1px solid var(--civ-line-strong);
@@ -156,19 +215,39 @@
   backdrop-filter: blur(8px);
 }
 
-.cvt-searchbar input::placeholder { color: var(--civ-text-mute); }
+.cvt-searchbar input::placeholder {
+  color: var(--civ-text-mute);
+}
 
-.cvt-searchbar input:focus, .cvt-searchbar select:focus,
-.cvt-modal input:focus, .cvt-modal select:focus {
+.cvt-searchbar input:focus,
+.cvt-searchbar select:focus,
+.cvt-modal input:focus,
+.cvt-modal select:focus {
   border-color: rgba(255,255,255,.30);
   box-shadow: 0 0 0 3px rgba(255,255,255,.04), 0 0 0 1px rgba(255,255,255,.08);
   background: rgba(255,255,255,.07);
 }
 
-.cvt-row { display: flex; gap: 8px; align-items: stretch; }
-.cvt-row > * { flex: 1; min-width: 0; }
-select option { background: #111; color: #f0f0f0; }
+/* ── 9. Rows ─────────────────────────────────────────────────────────────── */
+.cvt-row {
+  display: flex; gap: 8px; align-items: stretch;
+}
+.cvt-row > * {
+  flex: 1; min-width: 0;
+}
 
+select option {
+  background: #111; color: #f0f0f0;
+}
+
+.cvt-select-sm {
+  max-width: 110px;
+  font-size: 11px;
+  padding: 6px 8px;
+  flex: 0 0 auto;
+}
+
+/* ── 10. Buttons ────────────────────────────────────────────────────────── */
 .cvt-btn {
   position: relative;
   border: 0; cursor: pointer;
@@ -195,10 +274,19 @@ select option { background: #111; color: #f0f0f0; }
   transform: translateY(-2px);
   box-shadow: var(--civ-shadow-glow), 0 4px 20px rgba(255,255,255,.06);
 }
-.cvt-btn:hover::after { transform: translateX(100%); transition: transform .60s var(--civ-ease-out); }
-.cvt-btn:active { transform: translateY(0) scale(0.98); box-shadow: 0 1px 4px rgba(0,0,0,.40); }
-.cvt-btn[disabled] { opacity: .35; cursor: not-allowed; transform: none; box-shadow: none; }
+.cvt-btn:hover::after {
+  transform: translateX(100%);
+  transition: transform .60s var(--civ-ease-out);
+}
+.cvt-btn:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 1px 4px rgba(0,0,0,.40);
+}
+.cvt-btn[disabled] {
+  opacity: .35; cursor: not-allowed; transform: none; box-shadow: none;
+}
 
+/* ── Ghost (outline) variant ───────────────────────────────────────────── */
 .cvt-btn.ghost {
   background: var(--civ-glass);
   color: var(--civ-text);
@@ -211,7 +299,11 @@ select option { background: #111; color: #f0f0f0; }
   box-shadow: 0 2px 12px rgba(0,0,0,.30);
 }
 .cvt-btn.ghost::after { display: none; }
+.cvt-btn.ghost:active {
+  transform: translateY(0) scale(0.97);
+}
 
+/* ── Danger variant ─────────────────────────────────────────────────────── */
 .cvt-btn.danger {
   background: linear-gradient(135deg, #444, #222);
   color: #fff;
@@ -222,12 +314,31 @@ select option { background: #111; color: #f0f0f0; }
   box-shadow: 0 4px 16px rgba(0,0,0,.40);
 }
 
+/* ── Extra-small ────────────────────────────────────────────────────────── */
+.cvt-btn-xs {
+  padding: 6px 12px;
+  font-size: 11px;
+}
+.cvt-btn-xs.ghost {
+  padding: 5px 10px;
+}
+
+/* ── Copy button ────────────────────────────────────────────────────────── */
+.cvt-copy-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.3;
+  border-radius: 4px;
+}
+
+/* ── 11. Grid (Card Layout) ─────────────────────────────────────────────── */
 .cvt-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
 }
 
+/* ── 12. Cards (Browse) ─────────────────────────────────────────────────── */
 .cvt-card {
   position: relative;
   background: rgba(20,20,20,0.55);
@@ -256,13 +367,25 @@ select option { background: #111; color: #f0f0f0; }
   box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.60);
   z-index: 5;
 }
-.cvt-card:hover::before { opacity: 1; }
+.cvt-card:hover::before {
+  opacity: 1;
+}
 
 .cvt-card .thumb {
   width: 100%; aspect-ratio: 3/4;
   object-fit: cover;
   background: linear-gradient(135deg, #1a1a1a, #0f0f0f);
   display: block;
+  overflow: hidden;
+}
+.cvt-card .thumb img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform .40s var(--civ-spring);
+}
+.cvt-card:hover .thumb img {
+  transform: scale(1.04);
 }
 
 .cvt-card .body {
@@ -284,6 +407,7 @@ select option { background: #111; color: #f0f0f0; }
   margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
 }
 
+/* ── 13. Badges ─────────────────────────────────────────────────────────── */
 .cvt-badge {
   display: inline-flex; align-items: center;
   padding: 3px 8px; border-radius: 999px;
@@ -293,14 +417,24 @@ select option { background: #111; color: #f0f0f0; }
   border: 1px solid var(--civ-line-strong);
   text-transform: uppercase;
 }
-.cvt-badge.nsfw { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.25); color: #fff; font-weight: 700; }
+.cvt-badge.nsfw {
+  background: rgba(255,255,255,.12);
+  border-color: rgba(255,255,255,.25);
+  color: #fff;
+  font-weight: 700;
+}
 
+/* ── 14. Pagination ────────────────────────────────────────────────────── */
 .cvt-pager {
   display: flex; justify-content: center; align-items: center;
   gap: 14px; margin: 18px 0 8px;
+  flex-shrink: 0;
 }
-.cvt-pager .page-info { font-size: 11px; color: var(--civ-text-dim); font-weight: 500; }
+.cvt-pager .page-info {
+  font-size: 11px; color: var(--civ-text-dim); font-weight: 500;
+}
 
+/* ── 15. Empty State ───────────────────────────────────────────────────── */
 .cvt-empty {
   color: var(--civ-text-dim);
   text-align: center;
@@ -312,6 +446,45 @@ select option { background: #111; color: #f0f0f0; }
   animation: cvt-fade .35s var(--civ-ease-out);
 }
 
+/* ── 16. Flash Hint ─────────────────────────────────────────────────────── */
+.cvt-flash {
+  position: absolute; bottom: 4px; left: 12px; right: 12px;
+  font-size: 11px; color: var(--civ-text-dim);
+  background: rgba(20,20,20,0.85);
+  padding: 6px 10px;
+  border-radius: var(--civ-radius-sm);
+  border: 1px solid var(--civ-line-strong);
+  z-index: 5;
+  backdrop-filter: blur(8px);
+  text-align: center;
+  animation: cvt-fade .20s var(--civ-ease-out);
+  pointer-events: none;
+}
+
+/* ── 17. Skeleton Loading ───────────────────────────────────────────────── */
+.cvt-skel {
+  background: linear-gradient(135deg, rgba(255,255,255,.03) 0%, rgba(255,255,255,.06) 50%, rgba(255,255,255,.03) 100%);
+  border-radius: var(--civ-radius);
+  aspect-ratio: 3/4;
+  position: relative;
+  overflow: hidden;
+  animation: cvt-shimmer 1.5s ease-in-out infinite;
+  border: 1px solid var(--civ-line);
+}
+
+.cvt-skel::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.04) 50%, transparent 70%);
+  animation: cvt-shimmer-slide 1.8s ease-in-out infinite;
+}
+
+@keyframes cvt-shimmer-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* ── 18. Spinner ────────────────────────────────────────────────────────── */
 .cvt-spinner {
   width: 38px; height: 38px;
   border-radius: 50%;
@@ -321,8 +494,11 @@ select option { background: #111; color: #f0f0f0; }
   margin: 40px auto;
 }
 
-@keyframes cvt-spin { to { transform: rotate(360deg); } }
+@keyframes cvt-spin {
+  to { transform: rotate(360deg); }
+}
 
+/* ── 19. Shared Animations ──────────────────────────────────────────────── */
 .cvt-fade { animation: cvt-fade .20s var(--civ-ease-out); }
 @keyframes cvt-fade { from { opacity: 0; } to { opacity: 1; } }
 
@@ -332,6 +508,12 @@ select option { background: #111; color: #f0f0f0; }
   to { transform: translateY(0) scale(1); opacity: 1; }
 }
 
+@keyframes cvt-shimmer {
+  0%, 100% { opacity: .5; }
+  50% { opacity: .8; }
+}
+
+/* ── 20. Modal Background ──────────────────────────────────────────────── */
 .cvt-modal-bg {
   position: fixed; inset: 0; z-index: 10000;
   background: rgba(0,0,0,0.6);
@@ -342,8 +524,12 @@ select option { background: #111; color: #f0f0f0; }
   animation: cvt-fade .25s var(--civ-ease-out);
 }
 
-.cvt-modal-wrap { width: min(1100px, 97vw); max-height: 94vh; }
+.cvt-modal-wrap {
+  width: min(1100px, 97vw); max-height: 94vh;
+  position: relative;
+}
 
+/* ── 21. Modal Body ─────────────────────────────────────────────────────── */
 .cvt-modal {
   width: 100%; max-height: inherit;
   display: grid; grid-template-columns: 1.5fr 1fr;
@@ -357,7 +543,9 @@ select option { background: #111; color: #f0f0f0; }
   animation: cvt-pop .28s var(--civ-spring);
 }
 
-.cvt-modal .left, .cvt-modal .right {
+/* ── 22. Modal Columns ──────────────────────────────────────────────────── */
+.cvt-modal .left,
+.cvt-modal .right {
   padding: 14px 16px; min-height: 0; overflow: hidden; max-height: 100%;
 }
 .cvt-modal .left {
@@ -365,16 +553,26 @@ select option { background: #111; color: #f0f0f0; }
   border-right: 1px solid var(--civ-line);
   background: rgba(0,0,0,0.20);
   backdrop-filter: blur(12px);
+  overflow-y: auto;
 }
-.cvt-modal .right { display: flex; flex-direction: column; }
+.cvt-modal .right {
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
 
-.cvt-modal h2 { margin: 0 0 6px; font-size: 16px; font-weight: 700; color: var(--civ-accent); flex-shrink: 0; }
-.cvt-modal .sub { color: var(--civ-text-dim); font-size: 10px; margin-bottom: 8px; flex-shrink: 0; }
+.cvt-modal h2 {
+  margin: 0 0 6px; font-size: 16px; font-weight: 700;
+  color: var(--civ-accent); flex-shrink: 0;
+}
+.cvt-modal .sub {
+  color: var(--civ-text-dim); font-size: 10px; margin-bottom: 8px; flex-shrink: 0;
+}
 .cvt-modal label {
   display: block; font-size: 10px; color: var(--civ-text-mute);
   margin: 5px 0 3px; text-transform: uppercase; font-weight: 600;
 }
 
+/* ── 23. Gallery (inside modal) ──────────────────────────────────────────── */
 .cvt-modal .gallery {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
   flex: 1; min-height: 0; overflow-y: auto; align-content: start; padding-right: 4px;
@@ -383,11 +581,24 @@ select option { background: #111; color: #f0f0f0; }
   width: 100%; aspect-ratio: 3/4; object-fit: cover;
   border-radius: var(--civ-radius-sm);
   background: #141414;
-  transition: transform .25s var(--civ-spring);
+  transition: transform .25s var(--civ-spring), filter .20s var(--civ-ease-out);
   cursor: pointer;
 }
-.cvt-modal .gallery img:hover { transform: scale(1.03); box-shadow: 0 4px 20px rgba(0,0,0,.50); }
+.cvt-modal .gallery img:hover {
+  transform: scale(1.03);
+  box-shadow: 0 4px 20px rgba(0,0,0,.50);
+}
 
+/* ── 24. NSFW gallery images ───────────────────────────────────────────── */
+.cvt-modal .gallery img.nsfw {
+  filter: blur(20px) grayscale(0.5);
+  transition: filter .25s var(--civ-ease-out);
+}
+.cvt-modal .gallery img.nsfw:hover {
+  filter: none;
+}
+
+/* ── 25. Modal Close Button ─────────────────────────────────────────────── */
 .cvt-modal .close {
   position: absolute; top: 8px; right: 12px;
   width: 30px; height: 30px; border-radius: 50%;
@@ -398,8 +609,29 @@ select option { background: #111; color: #f0f0f0; }
   transition: transform .30s var(--civ-spring), background .25s var(--civ-ease-out), color .25s var(--civ-ease-out);
   backdrop-filter: blur(16px);
 }
-.cvt-modal .close:hover { transform: rotate(90deg); background: #333; color: #fff; }
+.cvt-modal .close:hover {
+  transform: rotate(90deg);
+  background: #333;
+  color: #fff;
+}
+.cvt-modal .close:active {
+  transform: rotate(90deg) scale(0.92);
+}
 
+/* ── 26. Description ──────────────────────────────────────────────────── */
+.cvt-desc {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--civ-text-dim);
+  overflow-y: auto;
+  padding-right: 4px;
+  word-break: break-word;
+}
+.cvt-desc p { margin: 4px 0; }
+.cvt-desc a { color: var(--civ-accent-dim); text-decoration: underline; }
+.cvt-desc a:hover { color: var(--civ-accent); }
+
+/* ── 27. Files List ─────────────────────────────────────────────────────── */
 .cvt-files-list {
   font-size: 10.5px; max-height: 110px; overflow: auto; flex-shrink: 0;
   border: 1px solid var(--civ-line);
@@ -416,7 +648,10 @@ select option { background: #111; color: #f0f0f0; }
 }
 .cvt-files-list .f:last-child { border-bottom: 0; }
 .cvt-files-list .f:hover { background: rgba(255,255,255,.03); }
+.cvt-files-list .f .name { font-weight: 500; color: var(--civ-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cvt-files-list .f .size { color: var(--civ-text-dim); flex-shrink: 0; margin-left: 8px; }
 
+/* ── 28. Download Jobs ─────────────────────────────────────────────────── */
 .cvt-job {
   background: rgba(20,20,20,0.55);
   backdrop-filter: blur(16px) saturate(140%);
@@ -428,29 +663,86 @@ select option { background: #111; color: #f0f0f0; }
   transition: border-color .25s var(--civ-ease-out), box-shadow .25s var(--civ-ease-out), transform .20s var(--civ-spring);
   box-shadow: 0 2px 12px rgba(0,0,0,.30);
 }
-.cvt-job:hover { border-color: var(--civ-line-strong); box-shadow: 0 2px 12px rgba(0,0,0,.30); }
-.cvt-job .top { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
-.cvt-job .name { font-size: 12px; font-weight: 600; color: var(--civ-text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 7px; }
-.cvt-job .sub { font-size: 10.5px; color: var(--civ-text-dim); margin-top: 5px; }
-.cvt-job .bar { width: 100%; height: 6px; background: rgba(255,255,255,.04); border-radius: 3px; overflow: hidden; margin-top: 10px; }
-.cvt-job .bar > div { height: 100%; background: linear-gradient(90deg, rgba(255,255,255,.50), rgba(255,255,255,.80)); border-radius: 3px; box-shadow: 0 0 10px rgba(255,255,255,.12); transition: width .40s var(--civ-ease-out); }
+.cvt-job:hover {
+  border-color: var(--civ-line-strong);
+  box-shadow: 0 2px 12px rgba(0,0,0,.30);
+}
+.cvt-job .top {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+}
+.cvt-job .name {
+  font-size: 12px; font-weight: 600; color: var(--civ-text);
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 7px;
+}
+.cvt-job .sub {
+  font-size: 10.5px; color: var(--civ-text-dim); margin-top: 5px;
+}
+.cvt-job .bar {
+  width: 100%; height: 6px;
+  background: rgba(255,255,255,.04);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+.cvt-job .bar > div {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255,255,255,.50), rgba(255,255,255,.80));
+  border-radius: 3px;
+  box-shadow: 0 0 10px rgba(255,255,255,.12);
+  transition: width .40s var(--civ-ease-out);
+}
 .cvt-job.running .bar > div {
   background: linear-gradient(90deg, rgba(255,255,255,.40) 25%, rgba(255,255,255,.70) 50%, rgba(255,255,255,.40) 75%);
   background-size: 200% 100%;
   animation: cvt-bar 1.8s linear infinite;
 }
-@keyframes cvt-bar { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-.cvt-job.done .bar > div { background: rgba(255,255,255,.20); box-shadow: none; }
-.cvt-job.error .bar > div { background: rgba(255,255,255,.10); box-shadow: none; }
+.cvt-job.done .bar > div {
+  background: rgba(255,255,255,.20);
+  box-shadow: none;
+}
+.cvt-job.error .bar > div {
+  background: rgba(255,255,255,.10);
+  box-shadow: none;
+}
 
-.cvt-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: 0 0 8px; }
-.cvt-status-dot.running { background: #fff; animation: cvt-pulse 1.4s ease-in-out infinite; box-shadow: 0 0 8px rgba(255,255,255,.40); }
-.cvt-status-dot.done { background: #888; box-shadow: 0 0 4px rgba(255,255,255,.15); }
-.cvt-status-dot.error { background: #444; }
-.cvt-status-dot.cancelled { background: #333; }
-@keyframes cvt-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .30; transform: scale(.70); } }
+@keyframes cvt-bar {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 
-.cvt-settings { display: flex; flex-direction: column; gap: 12px; }
+/* ── 29. Status Dots ────────────────────────────────────────────────────── */
+.cvt-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; flex: 0 0 8px;
+}
+.cvt-status-dot.running {
+  background: #fff;
+  animation: cvt-pulse 1.4s ease-in-out infinite;
+  box-shadow: 0 0 8px rgba(255,255,255,.40);
+}
+.cvt-status-dot.done {
+  background: #888;
+  box-shadow: 0 0 4px rgba(255,255,255,.15);
+}
+.cvt-status-dot.error {
+  background: #444;
+}
+.cvt-status-dot.cancelled {
+  background: #333;
+}
+
+@keyframes cvt-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .30; transform: scale(.70); }
+}
+
+/* ── 30. Settings Panel ────────────────────────────────────────────────── */
+.cvt-settings {
+  display: flex; flex-direction: column; gap: 12px;
+}
+
 .cvt-settings .group {
   background: rgba(20,20,20,0.55);
   backdrop-filter: blur(16px) saturate(140%);
@@ -467,15 +759,35 @@ select option { background: #111; color: #f0f0f0; }
   background: var(--civ-accent-dim); opacity: .50;
   transition: opacity .25s var(--civ-ease-out);
 }
-.cvt-settings .group:hover { border-color: var(--civ-line-strong); box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.cvt-settings .group:hover {
+  border-color: var(--civ-line-strong);
+  box-shadow: 0 2px 10px rgba(0,0,0,.25);
+}
 .cvt-settings .group:hover::before { opacity: .80; }
-.cvt-settings .group label { font-size: 11px; color: var(--civ-text-dim); text-transform: uppercase; font-weight: 600; }
+.cvt-settings .group label {
+  font-size: 11px; color: var(--civ-text-dim);
+  text-transform: uppercase; font-weight: 600;
+}
 .cvt-settings input { margin-top: 6px; }
-.cvt-settings .hint { font-size: 11px; color: var(--civ-text-mute); margin-top: 7px; line-height: 1.45; }
-.cvt-settings .check { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--civ-text); cursor: pointer; }
+.cvt-settings .hint {
+  font-size: 11px; color: var(--civ-text-mute);
+  margin-top: 7px; line-height: 1.45;
+}
+.cvt-settings .check {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; font-size: 12px;
+  color: var(--civ-text); cursor: pointer;
+  transition: color .20s var(--civ-ease-out);
+}
 .cvt-settings .check:hover { color: #fff; }
 .cvt-settings .check input { width: auto; margin: 0; }
 
+.cvt-settings-actions {
+  display: flex; gap: 8px; margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+/* ── 31. Lightbox ───────────────────────────────────────────────────────── */
 .cvt-lightbox-bg {
   position: fixed; inset: 0; z-index: 20000;
   background: rgba(0,0,0,0.65);
@@ -487,6 +799,7 @@ select option { background: #111; color: #f0f0f0; }
   padding: 20px;
 }
 
+/* ── 32. Generation Panel (lightbox sidebar) ────────────────────────────── */
 .cvt-gen-panel {
   flex: 0 0 300px;
   max-height: 88vh;
@@ -504,15 +817,94 @@ select option { background: #111; color: #f0f0f0; }
   animation: cvt-pop .28s var(--civ-spring);
 }
 
-.cvt-gen-heading { font-size: 11px; font-weight: 700; color: var(--civ-text); text-transform: uppercase; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--civ-line); }
-.cvt-gen-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 11px; }
-.cvt-gen-label { color: var(--civ-text-mute); font-size: 10px; font-weight: 600; text-transform: uppercase; }
-.cvt-gen-value { color: var(--civ-text); text-align: right; }
+.cvt-gen-heading {
+  font-size: 11px; font-weight: 700;
+  color: var(--civ-text); text-transform: uppercase;
+  margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--civ-line);
+}
 
-.cvt-prompt-box { margin-top: 10px; padding: 10px 12px; background: rgba(0,0,0,0.25); backdrop-filter: blur(8px); border: 1px solid var(--civ-line); border-radius: var(--civ-radius-sm); }
-.cvt-prompt-text { font-size: 11px; color: var(--civ-text-dim); line-height: 1.55; margin-top: 4px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.cvt-gen-param-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 12px;
+  margin-bottom: 8px;
+}
 
-.cvt-local-list { display: flex; flex-direction: column; gap: 10px; width: 100%; flex: 1; overflow: auto; }
+.cvt-gen-param-row {
+  display: flex; justify-content: space-between;
+  padding: 3px 0;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+
+.cvt-gen-row {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; font-size: 11px;
+}
+.cvt-gen-label {
+  color: var(--civ-text-mute);
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase;
+}
+.cvt-gen-value {
+  color: var(--civ-text); text-align: right;
+}
+
+/* ── 33. Prompt Display ─────────────────────────────────────────────────── */
+.cvt-prompt-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.25);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--civ-line);
+  border-radius: var(--civ-radius-sm);
+}
+
+.cvt-prompt-text {
+  font-size: 11px;
+  color: var(--civ-text-dim);
+  line-height: 1.55;
+  margin-top: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cvt-prompt-area {
+  font-size: 11px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ── 34. Local Tab ──────────────────────────────────────────────────────── */
+.cvt-local-list {
+  display: flex; flex-direction: column; gap: 10px;
+  width: 100%; flex: 1; overflow: auto;
+}
+
+.cvt-local-count {
+  font-size: 12px; font-weight: 600; color: var(--civ-text);
+}
+
+/* ── 35. Local Grid (2-column override) ────────────────────────────────── */
+#cvt-local-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+@media (max-width: 600px) {
+  #cvt-local-grid { grid-template-columns: 1fr; }
+}
+
+/* ── 36. Local Cards ────────────────────────────────────────────────────── */
 .cvt-local-card {
   width: 100%; box-sizing: border-box; flex-shrink: 0;
   background: rgba(20,20,20,0.55);
@@ -524,20 +916,67 @@ select option { background: #111; color: #f0f0f0; }
   transition: border-color .25s var(--civ-ease-out), box-shadow .25s var(--civ-ease-out), transform .20s var(--civ-spring);
   box-shadow: 0 2px 12px rgba(0,0,0,.30);
 }
-.cvt-local-card:hover { border-color: var(--civ-line-strong); box-shadow: 0 2px 12px rgba(0,0,0,.30); transform: translateY(-2px); }
-.cvt-local-card h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--civ-text); }
-.cvt-local-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 11px; color: var(--civ-text-dim); margin-bottom: 10px; }
-.cvt-local-meta strong { color: var(--civ-text-mute); font-weight: 500; text-transform: uppercase; font-size: 10px; }
-.cvt-local-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
-.cvt-tag { display: inline-block; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,.05); color: var(--civ-text-dim); font-size: 10px; border: 1px solid var(--civ-line); transition: background .20s var(--civ-ease-out), color .20s var(--civ-ease-out); }
-.cvt-tag:hover { background: rgba(255,255,255,.12); color: var(--civ-text); }
-.cvt-local-actions { display: flex; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--civ-line); }
-.cvt-local-count { font-size: 12px; font-weight: 600; color: var(--civ-text); }
+.cvt-local-card:hover {
+  border-color: var(--civ-line-strong);
+  box-shadow: 0 2px 12px rgba(0,0,0,.30);
+  transform: translateY(-2px);
+}
+.cvt-local-card h3 {
+  margin: 0 0 4px; font-size: 13px; font-weight: 600;
+  color: var(--civ-text);
+}
+.cvt-local-card h3 a {
+  color: var(--civ-accent-dim);
+  text-decoration: none;
+  transition: color .20s var(--civ-ease-out);
+}
+.cvt-local-card h3 a:hover { color: var(--civ-accent); }
 
+.cvt-local-meta {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-size: 11px; color: var(--civ-text-dim);
+  margin-bottom: 10px;
+}
+.cvt-local-meta strong {
+  color: var(--civ-text-mute);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.cvt-local-tags {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin: 8px 0;
+}
+
+.cvt-local-actions {
+  display: flex; gap: 8px;
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--civ-line);
+}
+
+/* ── 37. Tag Badges ──────────────────────────────────────────────────────── */
+.cvt-tag {
+  display: inline-block;
+  padding: 2px 7px; border-radius: 999px;
+  background: rgba(255,255,255,.05);
+  color: var(--civ-text-dim);
+  font-size: 10px;
+  border: 1px solid var(--civ-line);
+  transition: background .20s var(--civ-ease-out), color .20s var(--civ-ease-out);
+}
+.cvt-tag:hover {
+  background: rgba(255,255,255,.12);
+  color: var(--civ-text);
+}
+
+/* ── 38. Toast Notifications ───────────────────────────────────────────── */
 .cvt-toast-wrap {
   position: fixed; bottom: 24px; right: 24px; z-index: 11000;
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
 }
+
 .cvt-toast {
   pointer-events: auto;
   background: var(--civ-glass-strong);
@@ -551,15 +990,558 @@ select option { background: #111; color: #f0f0f0; }
   backdrop-filter: blur(16px);
   animation: cvt-toast-in .30s var(--civ-spring);
 }
+
 @keyframes cvt-toast-in {
   from { transform: translateX(24px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
 
-.cvt-nsfw-blur img { filter: blur(20px) grayscale(0.5); transition: filter .2s; }
+.cvt-toast.error {
+  border-color: rgba(255,100,100,.30);
+  background: rgba(30,10,10,0.85);
+}
 
+/* ── 39. NSFW Blur Utility ──────────────────────────────────────────────── */
+.cvt-nsfw-blur img {
+  filter: blur(20px) grayscale(0.5);
+  transition: filter .20s var(--civ-ease-out);
+}
+
+/* ── 40. Emoji Buttons & Animations ─────────────────────────────────────── */
+.emoji-btn {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.emoji-float {
+  animation: emoji-float 2.6s ease-in-out infinite;
+}
+.emoji-bounce {
+  animation: emoji-bounce 1.4s ease-in-out infinite;
+}
+.emoji-pulse {
+  animation: emoji-pulse 1.8s ease-in-out infinite;
+}
+.emoji-wiggle {
+  animation: emoji-wiggle 0.8s ease-in-out infinite;
+}
+.emoji-spin {
+  animation: emoji-spin 3s linear infinite;
+}
+.emoji-spin-slow {
+  animation: emoji-spin 6s linear infinite;
+}
+
+@keyframes emoji-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes emoji-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  40% { transform: translateY(-4px) scale(1.08); }
+  60% { transform: translateY(-1px) scale(0.98); }
+}
+@keyframes emoji-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.12); opacity: .8; }
+}
+@keyframes emoji-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(6deg); }
+  75% { transform: rotate(-6deg); }
+}
+@keyframes emoji-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── 41. Cancel button in downloads ─────────────────────────────────────── */
+.cvt-cancel-btn {
+  background: rgba(255,80,80,.12);
+  color: #f88;
+  border: 1px solid rgba(255,80,80,.20);
+  padding: 3px 10px;
+  font-size: 10px;
+  border-radius: var(--civ-radius-sm);
+  cursor: pointer;
+  transition: background .20s var(--civ-ease-out), border-color .20s var(--civ-ease-out);
+}
+.cvt-cancel-btn:hover {
+  background: rgba(255,80,80,.25);
+  border-color: rgba(255,80,80,.40);
+}
+
+/* ── 42. Stats row in detail modal ──────────────────────────────────────── */
+.cvt-stats-row {
+  display: flex; gap: 12px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--civ-text-dim);
+  flex-shrink: 0;
+}
+.cvt-stats-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── 43. Download buttons in detail modal ───────────────────────────────── */
+.cvt-dl-btn {
+  margin-top: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── 44. Hover overlay for local cards ──────────────────────────────────── */
+.cvt-local-hover {
+  display: none;
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(8px);
+  padding: 8px 10px;
+  font-size: 10px;
+  border-radius: 0 0 var(--civ-radius) var(--civ-radius);
+  z-index: 5;
+  color: var(--civ-text-dim);
+  line-height: 1.4;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.cvt-local-card:hover .cvt-local-hover {
+  display: block;
+}
+
+/* ── 45. Version Select in Details ──────────────────────────────────────── */
+.cvt-version-select {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 11px;
+  border-radius: var(--civ-radius-sm);
+  background: rgba(255,255,255,.04);
+  color: var(--civ-text);
+  border: 1px solid var(--civ-line-strong);
+  outline: none;
+  margin-bottom: 6px;
+  transition: border-color .25s var(--civ-ease-out);
+}
+.cvt-version-select:focus {
+  border-color: rgba(255,255,255,.30);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.04);
+}
+
+/* ── 46. Rating Checkbox Row ────────────────────────────────────────────── */
+.cvt-rating-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cvt-rating-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--civ-text-dim);
+  transition: color .20s var(--civ-ease-out);
+}
+.cvt-rating-row label:hover {
+  color: var(--civ-text);
+}
+.cvt-rating-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  accent-color: rgba(255,255,255,.5);
+}
+
+/* ── 47. Filter input in searchbar ──────────────────────────────────────── */
+.cvt-filter-in {
+  flex: 1;
+  min-width: 100px;
+}
+
+/* ── 48. Util: horizontal scroll container for thumb strips ────────────── */
+.cvt-hscroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  max-width: 100%;
+}
+.cvt-hscroll::-webkit-scrollbar {
+  height: 4px;
+}
+.cvt-hscroll::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.12);
+  border-radius: 4px;
+}
+
+/* ── 49. Error box ──────────────────────────────────────────────────────── */
+.cvt-error-box {
+  background: linear-gradient(135deg, rgba(244,114,182,.08), rgba(96,165,250,.08));
+  border: 1px solid var(--civ-line-strong);
+  border-radius: var(--civ-radius);
+  padding: 14px 16px;
+  color: var(--civ-text);
+  animation: cvt-fade .30s var(--civ-ease-out);
+}
+.cvt-error-box .heading {
+  font-weight: 700;
+  margin-bottom: 6px;
+  background: var(--civ-grad-primary);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.cvt-error-box .msg {
+  font-size: 12px;
+  margin-bottom: 10px;
+  color: var(--civ-text-dim);
+}
+
+/* ── 50. Responsive: narrow panels ─────────────────────────────────────── */
 @media (max-width: 720px) {
-  .cvt-modal { grid-template-columns: 1fr; max-height: 92vh; }
-  .cvt-modal .left { border-right: 0; border-bottom: 1px solid var(--civ-line); max-height: 42vh; }
-  .cvt-modal .right { max-height: 50vh; }
+  .cvt-modal {
+    grid-template-columns: 1fr;
+    max-height: 92vh;
+  }
+  .cvt-modal .left {
+    border-right: 0;
+    border-bottom: 1px solid var(--civ-line);
+    max-height: 42vh;
+  }
+  .cvt-modal .right {
+    max-height: 50vh;
+  }
+  .cvt-gen-panel {
+    flex: 0 0 260px;
+    margin-left: 12px;
+    padding: 14px;
+  }
+  .cvt-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+  .cvt-card .title {
+    font-size: 11px;
+  }
+  .cvt-row {
+    flex-wrap: wrap;
+  }
+  .cvt-select-sm {
+    max-width: none;
+    flex: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .cvt-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .cvt-searchbar {
+    padding: 8px;
+    margin: -8px -8px 8px;
+  }
+  .cvt-pane {
+    padding: 8px;
+  }
+  .cvt-modal .gallery {
+    grid-template-columns: 1fr;
+  }
+  .cvt-tab {
+    font-size: 10px;
+    padding: 7px 4px;
+  }
+  .cvt-tabs {
+    padding: 6px 4px 4px;
+    gap: 2px;
+  }
+}
+
+/* ── 50b. Lightbox image container ────────────────────────────────────────── */
+.cvt-lightbox-img {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: var(--civ-radius-sm);
+  box-shadow: 0 16px 48px rgba(0,0,0,.70);
+  cursor: default;
+  animation: cvt-pop .30s var(--civ-spring);
+}
+
+.cvt-lightbox-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  max-width: 100%;
+}
+
+/* ── 50c. Focus visible for keyboard nav ─────────────────────────────────── */
+.cvt-tab:focus-visible,
+.cvt-btn:focus-visible,
+.cvt-tag:focus-visible,
+.cvt-modal .close:focus-visible,
+.cvt-cancel-btn:focus-visible {
+  outline: 2px solid rgba(255,255,255,.40);
+  outline-offset: 2px;
+}
+
+/* ── 50d. Horizontal rule separator ──────────────────────────────────────── */
+.cvt-hr {
+  border: 0;
+  height: 1px;
+  background: var(--civ-line);
+  margin: 12px 0;
+}
+
+/* ── 50e. Link styles ────────────────────────────────────────────────────── */
+.cvt-link {
+  color: var(--civ-accent-dim);
+  text-decoration: none;
+  transition: color .20s var(--civ-ease-out);
+  cursor: pointer;
+}
+.cvt-link:hover {
+  color: var(--civ-accent);
+  text-decoration: underline;
+}
+
+/* ── 50f. Download complete check animation ──────────────────────────────── */
+.cvt-done-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.15);
+  color: #fff;
+  font-size: 11px;
+  animation: cvt-check-in .40s var(--civ-spring);
+  flex-shrink: 0;
+}
+
+@keyframes cvt-check-in {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ── 50g. Badge variants ─────────────────────────────────────────────────── */
+.cvt-badge.success {
+  background: rgba(100,200,100,.12);
+  border-color: rgba(100,200,100,.25);
+  color: #8d8;
+}
+.cvt-badge.warning {
+  background: rgba(200,180,80,.12);
+  border-color: rgba(200,180,80,.25);
+  color: #ed8;
+}
+.cvt-badge.error {
+  background: rgba(200,80,80,.12);
+  border-color: rgba(200,80,80,.25);
+  color: #e88;
+}
+
+/* ── 50h. Small text utility ─────────────────────────────────────────────── */
+.cvt-text-sm { font-size: 10px; }
+.cvt-text-xs { font-size: 9px; }
+.cvt-text-mute { color: var(--civ-text-mute); }
+.cvt-text-dim { color: var(--civ-text-dim); }
+.cvt-text-center { text-align: center; }
+.cvt-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 50i. Version file entry highlight ───────────────────────────────────── */
+.cvt-files-list .f.selected {
+  background: rgba(255,255,255,.06);
+  border-left: 2px solid var(--civ-accent-dim);
+}
+
+/* ── 50j. Pane header section ────────────────────────────────────────────── */
+.cvt-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--civ-line);
+  flex-shrink: 0;
+}
+
+/* ── 50k. Filter input row (shared) ──────────────────────────────────────── */
+.cvt-filter-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.cvt-filter-row input {
+  flex: 1;
+  min-width: 100px;
+}
+.cvt-filter-row button {
+  flex: 0 0 auto;
+}
+
+/* ── 50l. Search result count ────────────────────────────────────────────── */
+.cvt-result-count {
+  font-size: 11px;
+  color: var(--civ-text-dim);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+/* ── 50m. Tab badge (notification dot on tabs) ───────────────────────────── */
+.cvt-tab-badge {
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--civ-accent);
+  box-shadow: 0 0 6px rgba(255,255,255,.30);
+  animation: cvt-pulse 1.6s ease-in-out infinite;
+}
+
+/* ── 50n. Button group (joined buttons) ──────────────────────────────────── */
+.cvt-btn-group {
+  display: flex;
+  gap: 0;
+}
+.cvt-btn-group .cvt-btn {
+  border-radius: 0;
+  margin: 0;
+}
+.cvt-btn-group .cvt-btn:first-child {
+  border-radius: var(--civ-radius-sm) 0 0 var(--civ-radius-sm);
+}
+.cvt-btn-group .cvt-btn:last-child {
+  border-radius: 0 var(--civ-radius-sm) var(--civ-radius-sm) 0;
+}
+.cvt-btn-group .cvt-btn + .cvt-btn {
+  border-left: 1px solid rgba(0,0,0,.15);
+}
+
+/* ── 50o. Tooltip-style hint ─────────────────────────────────────────────── */
+.cvt-hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.06);
+  color: var(--civ-text-dim);
+  font-size: 9px;
+  cursor: help;
+  transition: background .20s var(--civ-ease-out), color .20s var(--civ-ease-out);
+}
+.cvt-hint-icon:hover {
+  background: rgba(255,255,255,.14);
+  color: var(--civ-text);
+}
+
+/* ── 50p. Download speed / eta text ──────────────────────────────────────── */
+.cvt-speed {
+  font-size: 10px;
+  color: var(--civ-text-mute);
+  margin-top: 3px;
+}
+
+/* ── 50q. Preferred tag style in version selector ────────────────────────── */
+.cvt-version-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 9px;
+  border-radius: 4px;
+  background: rgba(255,255,255,.06);
+  color: var(--civ-text-dim);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ── 50r. Progress percentage text ───────────────────────────────────────── */
+.cvt-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--civ-text);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── 50s. Version name in detail modal ───────────────────────────────────── */
+.cvt-version-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--civ-accent-dim);
+  margin-bottom: 4px;
+}
+
+/* ── 50t. Selected model highlight in local cards ──────────────────────────── */
+.cvt-local-card.active {
+  border-color: var(--civ-accent-dim);
+  box-shadow: 0 0 0 1px var(--civ-accent-dim), 0 2px 12px rgba(0,0,0,.30);
+}
+
+/* ── 50u. Absolute-positioned NSFW overlay badge on cards ──────────────────── */
+.cvt-card .nsfw-overlay {
+  position: absolute;
+  top: 6px; right: 6px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  z-index: 5;
+  border: 1px solid rgba(255,255,255,.12);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* ── 50v. Smooth scroll behavior ──────────────────────────────────────────── */
+.cvt-smooth-scroll {
+  scroll-behavior: smooth;
+}
+
+/* ── 51. Reduced motion preference ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .cvt-pane.active,
+  .cvt-modal,
+  .cvt-card,
+  .cvt-btn,
+  .cvt-toast,
+  .cvt-tab,
+  .cvt-skel,
+  .cvt-lightbox-bg,
+  .cvt-gen-panel {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+  .cvt-skel::after {
+    animation: none !important;
+  }
+  .cvt-job.running .bar > div {
+    animation: none !important;
+  }
+  .emoji-float,
+  .emoji-bounce,
+  .emoji-pulse,
+  .emoji-wiggle,
+  .emoji-spin,
+  .emoji-spin-slow {
+    animation: none !important;
+  }
 }
