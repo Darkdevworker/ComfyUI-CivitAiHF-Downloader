@@ -874,3 +874,285 @@ select option { background: #111; color: #f0f0f0; }
 .cvt-root.light .cvt-prompt-box { background: rgba(0,0,0,.04); }
 .cvt-root.light .cvt-lightbox-bg { background: rgba(0,0,0,.60); }
 .cvt-root.light .cvt-status-dot.running { background: #333; }
+
+/* ════════════════════════════════════════════════════════════════════
+   ANIMATIONS — Comprehensive sidebar micro-interactions
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Staggered card entrance ─────────────────────────────────────── */
+.cvt-card {
+  animation: cvt-card-in .40s var(--civ-ease-out) both;
+}
+.cvt-card:nth-child(1)  { animation-delay: .00s; }
+.cvt-card:nth-child(2)  { animation-delay: .03s; }
+.cvt-card:nth-child(3)  { animation-delay: .06s; }
+.cvt-card:nth-child(4)  { animation-delay: .09s; }
+.cvt-card:nth-child(5)  { animation-delay: .12s; }
+.cvt-card:nth-child(6)  { animation-delay: .15s; }
+.cvt-card:nth-child(7)  { animation-delay: .18s; }
+.cvt-card:nth-child(8)  { animation-delay: .21s; }
+.cvt-card:nth-child(9)  { animation-delay: .24s; }
+.cvt-card:nth-child(10) { animation-delay: .27s; }
+.cvt-card:nth-child(11) { animation-delay: .30s; }
+.cvt-card:nth-child(12) { animation-delay: .33s; }
+@keyframes cvt-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Card shimmer on hover ───────────────────────────────────────── */
+.cvt-card::after {
+  content: ""; position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.04) 45%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.04) 55%, transparent 70%);
+  transform: translateX(-120%);
+  transition: none; pointer-events: none;
+}
+.cvt-card:hover::after {
+  transform: translateX(120%);
+  transition: transform .65s var(--civ-ease-out);
+}
+
+/* ── Tab switch slide ────────────────────────────────────────────── */
+.cvt-tab { transition: color .25s var(--civ-ease-out), border-color .25s var(--civ-ease-out), background .25s var(--civ-ease-out), transform .25s var(--civ-spring); }
+.cvt-tab:active { transform: scale(0.95); }
+.cvt-tab.active {
+  animation: cvt-tab-pop .30s var(--civ-spring);
+}
+@keyframes cvt-tab-pop {
+  0%   { transform: scale(0.92); }
+  50%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+/* ── Searchbar slide-in ──────────────────────────────────────────── */
+.cvt-searchbar {
+  animation: cvt-searchbar-in .35s var(--civ-ease-out);
+}
+@keyframes cvt-searchbar-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Input focus glow ────────────────────────────────────────────── */
+.cvt-searchbar input:focus, .cvt-modal input:focus {
+  animation: cvt-input-glow .40s var(--civ-ease-out);
+}
+@keyframes cvt-input-glow {
+  0%   { box-shadow: 0 0 0 0 rgba(255,255,255,.15); }
+  50%  { box-shadow: 0 0 0 6px rgba(255,255,255,.06); }
+  100% { box-shadow: 0 0 0 3px rgba(255,255,255,.04), 0 0 0 1px rgba(255,255,255,.08); }
+}
+
+/* ── Button ripple + press ───────────────────────────────────────── */
+.cvt-btn { transition: transform .18s var(--civ-spring), box-shadow .25s var(--civ-ease-out), background .20s; }
+.cvt-btn:active { animation: cvt-btn-press .15s var(--civ-ease-out); }
+@keyframes cvt-btn-press {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(0.94); }
+  100% { transform: scale(0.98); }
+}
+
+/* ── Download job entrance ───────────────────────────────────────── */
+.cvt-job {
+  animation: cvt-job-in .35s var(--civ-spring) both;
+}
+.cvt-job:nth-child(1) { animation-delay: .00s; }
+.cvt-job:nth-child(2) { animation-delay: .05s; }
+.cvt-job:nth-child(3) { animation-delay: .10s; }
+.cvt-job:nth-child(4) { animation-delay: .15s; }
+.cvt-job:nth-child(5) { animation-delay: .20s; }
+@keyframes cvt-job-in {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Progress bar glow ───────────────────────────────────────────── */
+.cvt-job .bar { position: relative; }
+.cvt-job.running .bar::after {
+  content: ""; position: absolute; inset: -2px;
+  border-radius: 5px; pointer-events: none;
+  box-shadow: 0 0 10px rgba(255,255,255,.15);
+  animation: cvt-bar-glow 2s ease-in-out infinite;
+}
+@keyframes cvt-bar-glow {
+  0%,100% { opacity: .3; }
+  50%     { opacity: .8; }
+}
+
+/* ── Settings group entrance ─────────────────────────────────────── */
+.cvt-settings .group {
+  animation: cvt-group-in .40s var(--civ-ease-out) both;
+}
+.cvt-settings .group:nth-child(1) { animation-delay: .00s; }
+.cvt-settings .group:nth-child(2) { animation-delay: .05s; }
+.cvt-settings .group:nth-child(3) { animation-delay: .10s; }
+.cvt-settings .group:nth-child(4) { animation-delay: .15s; }
+@keyframes cvt-group-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Settings section title entrance ─────────────────────────────── */
+.cvt-settings-section-title {
+  animation: cvt-section-in .35s var(--civ-ease-out) both;
+}
+
+/* ── Settings action card bounce ─────────────────────────────────── */
+.cvt-settings-action-card {
+  transition: background .25s var(--civ-ease-out), border-color .25s var(--civ-ease-out), transform .30s var(--civ-spring), box-shadow .25s var(--civ-ease-out);
+}
+.cvt-settings-action-card:active {
+  transform: scale(0.96) !important;
+}
+.cvt-settings-action-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,.20);
+}
+
+/* ── Badge pulse ─────────────────────────────────────────────────── */
+.cvt-settings-badge.active {
+  animation: cvt-badge-pulse 2.5s ease-in-out infinite;
+}
+@keyframes cvt-badge-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(100,200,120,.0); }
+  50%     { box-shadow: 0 0 0 4px rgba(100,200,120,.12); }
+}
+
+/* ── Toast slide + exit ──────────────────────────────────────────── */
+.cvt-toast {
+  animation: cvt-toast-slide .35s var(--civ-spring);
+}
+@keyframes cvt-toast-slide {
+  from { transform: translateX(40px) scale(0.95); opacity: 0; }
+  to   { transform: translateX(0) scale(1); opacity: 1; }
+}
+
+/* ── Pager button hover ──────────────────────────────────────────── */
+.cvt-pager .cvt-btn {
+  transition: transform .25s var(--civ-spring), box-shadow .25s var(--civ-ease-out), background .20s;
+}
+.cvt-pager .cvt-btn:active { transform: scale(0.94); }
+
+/* ── Local card entrance ─────────────────────────────────────────── */
+.cvt-local-card {
+  animation: cvt-card-in .35s var(--civ-ease-out) both;
+}
+
+/* ── Tag hover bounce ────────────────────────────────────────────── */
+.cvt-tag {
+  transition: background .20s var(--civ-ease-out), color .20s var(--civ-ease-out), transform .25s var(--civ-spring);
+}
+.cvt-tag:hover { transform: scale(1.08); }
+
+/* ── Modal image zoom ────────────────────────────────────────────── */
+.cvt-modal .gallery img {
+  transition: transform .30s var(--civ-spring), box-shadow .30s var(--civ-ease-out);
+}
+
+/* ── Lightbox image entrance ─────────────────────────────────────── */
+.cvt-lightbox-bg img {
+  animation: cvt-lightbox-img .40s var(--civ-spring);
+}
+@keyframes cvt-lightbox-img {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Gen panel slide-in ──────────────────────────────────────────── */
+.cvt-gen-panel {
+  animation: cvt-gen-slide .35s var(--civ-spring);
+}
+@keyframes cvt-gen-slide {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Empty state float ───────────────────────────────────────────── */
+.cvt-empty {
+  animation: cvt-empty-float .50s var(--civ-ease-out);
+}
+@keyframes cvt-empty-float {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Spinner pulse ───────────────────────────────────────────────── */
+.cvt-spinner {
+  animation: cvt-spin .80s linear infinite, cvt-spinner-pulse 1.5s ease-in-out infinite;
+}
+@keyframes cvt-spinner-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,.0); }
+  50%     { box-shadow: 0 0 12px 2px rgba(255,255,255,.10); }
+}
+
+/* ── KB overlay key entrance ─────────────────────────────────────── */
+.cvt-kb-row {
+  animation: cvt-kb-row-in .25s var(--civ-ease-out) both;
+}
+.cvt-kb-row:nth-child(1) { animation-delay: .00s; }
+.cvt-kb-row:nth-child(2) { animation-delay: .03s; }
+.cvt-kb-row:nth-child(3) { animation-delay: .06s; }
+.cvt-kb-row:nth-child(4) { animation-delay: .09s; }
+.cvt-kb-row:nth-child(5) { animation-delay: .12s; }
+.cvt-kb-row:nth-child(6) { animation-delay: .15s; }
+.cvt-kb-row:nth-child(7) { animation-delay: .18s; }
+@keyframes cvt-kb-row-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Status dot color transitions ────────────────────────────────── */
+.cvt-status-dot { transition: background .30s, box-shadow .30s; }
+
+/* ── Files list row hover slide ──────────────────────────────────── */
+.cvt-files-list .f {
+  transition: background .20s var(--civ-ease-out), padding-left .20s var(--civ-ease-out);
+}
+.cvt-files-list .f:hover {
+  padding-left: 8px;
+}
+
+/* ── Theme toggle spin ───────────────────────────────────────────── */
+.cvt-theme-toggle {
+  transition: background .2s, color .2s, border-color .2s, transform .40s var(--civ-spring);
+}
+.cvt-theme-toggle:active {
+  transform: rotate(180deg) scale(0.9);
+}
+
+/* ── Select dropdown animation ───────────────────────────────────── */
+.cvt-searchbar select, .cvt-modal select {
+  transition: border-color .25s var(--civ-ease-out), box-shadow .25s var(--civ-ease-out), background .25s var(--civ-ease-out), transform .15s var(--civ-spring);
+}
+.cvt-searchbar select:focus, .cvt-modal select:focus {
+  animation: cvt-input-glow .40s var(--civ-ease-out);
+}
+
+/* ── Checkbox toggle animation ───────────────────────────────────── */
+.cvt-settings-toggle input[type="checkbox"],
+.cvt-settings .check input[type="checkbox"] {
+  transition: transform .20s var(--civ-spring), accent-color .20s;
+}
+.cvt-settings-toggle input[type="checkbox"]:active {
+  transform: scale(0.8);
+}
+
+/* ── Scrollbar track hover ───────────────────────────────────────── */
+*::-webkit-scrollbar-thumb:active {
+  background: rgba(255,255,255,.25);
+}
+
+/* ── Loading shimmer for skel ────────────────────────────────────── */
+.cvt-skel {
+  animation: cvt-skel-pulse 1.5s ease-in-out infinite;
+  position: relative; overflow: hidden;
+}
+.cvt-skel::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,.04) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: cvt-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes cvt-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
