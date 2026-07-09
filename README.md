@@ -97,18 +97,6 @@
 
 ---
 
-## ⌨️ Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `/` | Focus search bar |
-| `←` `→` `↑` `↓` | Navigate between cards |
-| `Enter` | Open model detail |
-| `Esc` | Close modal / lightbox |
-| `1` `2` `3` `4` `5` | Switch tabs |
-| `Ctrl+C` | Toggle compact grid |
-| `?` | Show shortcuts help |
-
 ---
 
 ## 🗂 Supported Model Folders
