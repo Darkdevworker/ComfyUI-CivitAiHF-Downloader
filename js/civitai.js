@@ -267,6 +267,122 @@ function buildUI() {
   });
   root.insertBefore(tabBar, root.firstChild);
   renderBrowse(panes.civitai); panes.civitai._rendered = true;
+  // Theme toggle button
+  var themeBtn = el("button", { class: "cvt-theme-toggle", title: "Toggle light/dark theme" }, "\u2600\uFE0F");
+  themeBtn.onclick = function() {
+    root.classList.toggle("light");
+    var isLight = root.classList.contains("light");
+    themeBtn.textContent = isLight ? "\uD83C\uDF19" : "\u2600\uFE0F";
+    _api("/civitai/settings", { method:"POST", body:JSON.stringify({ theme: isLight ? "light" : "dark" }) }).catch(function(){});
+  };
+  root.appendChild(themeBtn);
+
+  // Keyboard shortcuts
+  root.setAttribute("tabindex", "0");
+  root.addEventListener("keydown", function(e) {
+    var tag = (e.target.tagName || "").toLowerCase();
+    var isInput = tag === "input" || tag === "textarea" || tag === "select";
+    // "/" to focus search (always)
+    if (e.key === "/" && !isInput) {
+      e.preventDefault();
+      var activePane = root.querySelector(".cvt-pane.active");
+      if (activePane) { var search = activePane.querySelector("input[type='text']"); if (search) search.focus(); }
+      return;
+    }
+    // "?" to show shortcuts help
+    if (e.key === "?" && !isInput) { e.preventDefault(); _showKBHelp(); return; }
+    // Number keys 1-5 for tabs
+    if (!isInput && e.key >= "1" && e.key <= "5") {
+      var idx = parseInt(e.key, 10) - 1;
+      var tabs = tabBar.querySelectorAll(".cvt-tab");
+      if (tabs[idx]) { e.preventDefault(); tabs[idx].click(); }
+      return;
+    }
+    // "c" for compact toggle
+    if (e.key === "c" && !isInput && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      root.classList.toggle("compact");
+      var isCompact = root.classList.contains("compact");
+      _api("/civitai/settings", { method:"POST", body:JSON.stringify({ compact_grid: isCompact }) }).catch(function(){});
+      _toast(isCompact ? "Compact grid on" : "Normal grid", "ok");
+      return;
+    }
+  });
+
+  // Card keyboard navigation (delegate)
+  root.addEventListener("keydown", function(e) {
+    var card = e.target.closest ? e.target.closest(".cvt-card") : null;
+    if (!card) return;
+    var grid = card.parentElement;
+    if (!grid || !grid.classList.contains("cvt-grid")) return;
+    var cards = Array.from(grid.querySelectorAll(".cvt-card"));
+    var idx = cards.indexOf(card);
+    var cols = Math.round(grid.offsetWidth / (card.offsetWidth + 10));
+    var next = -1;
+    if (e.key === "ArrowRight") next = idx + 1;
+    else if (e.key === "ArrowLeft") next = idx - 1;
+    else if (e.key === "ArrowDown") next = idx + cols;
+    else if (e.key === "ArrowUp") next = idx - cols;
+    else if (e.key === "Enter") { e.preventDefault(); card.click(); return; }
+    if (next >= 0 && next < cards.length) {
+      e.preventDefault();
+      cards[next].focus();
+    }
+  });
+
+  // Make cards focusable (observe grid for new cards)
+  var _cardObserver = new MutationObserver(function(muts) {
+    muts.forEach(function(m) {
+      m.addedNodes.forEach(function(n) {
+        if (n.nodeType === 1 && n.classList && n.classList.contains("cvt-card")) {
+          n.setAttribute("tabindex", "0");
+        }
+      });
+    });
+  });
+  root.addEventListener("DOMNodeInserted", function(e) {
+    if (e.target.classList && e.target.classList.contains("cvt-card")) {
+      e.target.setAttribute("tabindex", "0");
+    }
+  }, true);
+
+  // Keyboard shortcuts help overlay
+  function _showKBHelp() {
+    var overlay = el("div", { class: "cvt-kb-overlay" });
+    var panel = el("div", { class: "cvt-kb-panel" });
+    panel.appendChild(el("h3", {}, "\u2328\uFE0F Keyboard Shortcuts"));
+    var shortcuts = [
+      [["/"], "Focus search bar"],
+      [["\u2190","\u2191","\u2192","\u2193"], "Navigate cards"],
+      [["Enter"], "Open model detail"],
+      [["Esc"], "Close modal / lightbox"],
+      [["1","2","3","4","5"], "Switch tabs"],
+      [["Ctrl","C"], "Toggle compact grid"],
+      [["?"], "Show this help"],
+    ];
+    shortcuts.forEach(function(s) {
+      var row = el("div", { class: "cvt-kb-row" });
+      var keys = el("div", { class: "cvt-kb-keys" });
+      s[0].forEach(function(k) { keys.appendChild(el("span", { class: "cvt-kb-key" }, k)); });
+      row.appendChild(keys);
+      row.appendChild(el("span", { class: "cvt-kb-desc" }, s[1]));
+      panel.appendChild(row);
+    });
+    panel.appendChild(el("div", { style: { marginTop:"12px", fontSize:"10px", color:"var(--civ-text-mute)", textAlign:"center" } }, "Click anywhere or press Esc to close"));
+    overlay.appendChild(panel);
+    overlay.onclick = function() { overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+
+  // Load saved theme
+  _api("/civitai/settings").then(function(cfg) {
+    if (cfg.theme === "light") {
+      root.classList.add("light");
+      themeBtn.textContent = "\uD83C\uDF19";
+    }
+    if (cfg.compact_grid) root.classList.add("compact");
+  }).catch(function(){});
+
   return root;
 }
 
@@ -1600,7 +1716,23 @@ function _buildLocalUI(pane, data) {
 
   // Header
   var header = el("div", { style: { display:"flex", alignItems:"center", gap:"8px", marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
-  var count = el("span", { class: "cvt-local-count", style: { flex:"1", textAlign:"left" } }, S.local.models.length + " model(s)");
+  var totalSize = 0;
+  S.local.models.forEach(function(m) {
+    if (m.size) {
+      var match = m.size.match(/([\d.]+)\s*(GB|MB|KB|TB)/i);
+      if (match) {
+        var val = parseFloat(match[1]);
+        var unit = match[2].toUpperCase();
+        if (unit === "KB") totalSize += val / 1024 / 1024;
+        else if (unit === "MB") totalSize += val / 1024;
+        else if (unit === "GB") totalSize += val;
+        else if (unit === "TB") totalSize += val * 1024;
+      }
+    }
+  });
+  var sizeStr = totalSize >= 1 ? totalSize.toFixed(1) + " GB" : (totalSize * 1024).toFixed(0) + " MB";
+  var count = el("span", { class: "cvt-local-count", style: { flex:"1", textAlign:"left" } },
+    S.local.models.length + " model(s)" + (totalSize > 0 ? " \u00B7 \uD83D\uDCBE " + sizeStr : ""));
   count.title = "Scanned " + (data.count || S.local.models.length) + " models";
     var browseBtn = el("button", { class: "cvt-btn ghost" },
       el("span", { class: "emoji-btn emoji-float" }, "\uD83D\uDD0D"), " Browse");
@@ -1636,10 +1768,15 @@ function _buildLocalUI(pane, data) {
   if (!S.local.models.length) {
     grid.style.display = "block";
     grid.appendChild(el("div", { class: "cvt-empty", style: { marginTop:"20px" } },
-      el("div", { style: { fontSize:"16px", marginBottom:"10px" } }, "\uD83D\uDCED"),
-      el("div", {}, "No downloaded models found."),
-      el("div", { style: { fontSize:"11px", color:"var(--civ-text-mute)", marginTop:"6px" } },
-        "Download models from the Browse or HF tabs and they'll appear here.")));
+      el("div", { style: { fontSize:"32px", marginBottom:"12px" } }, "\uD83D\uDCED"),
+      el("div", { style: { fontSize:"14px", fontWeight:600, marginBottom:"6px" } }, "No models found"),
+      el("div", { style: { fontSize:"11px", color:"var(--civ-text-mute)", marginBottom:"16px" } },
+        "Download models from the Browse or HF tabs and they'll appear here."),
+      el("div", { style: { display:"flex", gap:"8px", justifyContent:"center" } },
+        el("button", { class: "cvt-btn", onclick: function() { if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "civitai" })); } },
+          "\uD83D\uDD0D Browse Civitai"),
+        el("button", { class: "cvt-btn ghost", onclick: function() { if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "hf" })); } },
+          "\uD83E\uDD17 Browse HuggingFace"))));
     return;
   }
 
@@ -1770,6 +1907,12 @@ function renderSettings(pane) {
   prefsGroup.appendChild(el("div", { class: "check" }, cbPrev, " Save preview image"));
   prefsGroup.appendChild(el("div", { class: "check" }, cbHash, " Verify SHA256"));
   prefsGroup.appendChild(el("div", { class: "check" }, cbNsfwBlur, " NSFW blur (card grid + previews)"));
+  var cbCompact = el("input", { type: "checkbox" });
+  cbCompact.onchange = function() {
+    if (cbCompact.checked) S.root.classList.add("compact");
+    else S.root.classList.remove("compact");
+  };
+  prefsGroup.appendChild(el("div", { class: "check" }, cbCompact, " Compact grid (denser cards)"));
   s.appendChild(prefsGroup);
 
   // ---- Base URL ----
@@ -1818,6 +1961,7 @@ function renderSettings(pane) {
     cbHash.checked = cfg.verify_sha256 !== false;
     cbNsfwBlur.checked = cfg.nsfw_blur !== false;
     window.__nsfwBlurEnabled = cfg.nsfw_blur !== false;
+    cbCompact.checked = cfg.compact_grid === true;
     apiHint.innerHTML = cfg.has_api_key
       ? "<span style='color:#9c9'>\u25CF API key present</span>"
       : "<span style='color:#c99'>\u25CB No API key set \u2014 public models only</span>";
@@ -1906,6 +2050,8 @@ function renderSettings(pane) {
       save_preview: cbPrev.checked,
       verify_sha256: cbHash.checked,
       nsfw_blur: cbNsfwBlur.checked,
+      compact_grid: cbCompact.checked,
+      theme: S.root.classList.contains("light") ? "light" : "dark",
     };
     _api("/civitai/settings", { method:"POST", body:JSON.stringify(body) }).then(function() {
       sStatus.textContent = "Preferences saved.";
