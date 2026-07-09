@@ -922,6 +922,7 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
       miniBar.appendChild(miniFill);
       statusLine.appendChild(miniBar);
       _toast(metadataOnly ? "Metadata queued" : "Queued: " + (job.filename || job.name || "download"), "ok");
+      _ensureDlPolling();
     }).catch(function(e) {
       statusLine.innerHTML = "";
       statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
@@ -1526,6 +1527,7 @@ function _hfDetail(repoIdOrData) {
         statusLine.appendChild(dlLink);
         statusLine.appendChild(document.createTextNode(" to monitor."));
         _toast(metadataOnly ? "HF metadata queued" : "HF queued: " + (job.filename || path), "ok");
+        _ensureDlPolling();
       }).catch(function(e) {
         statusLine.innerHTML = "";
         statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
@@ -1610,20 +1612,25 @@ function _pollDl() {
     _dlListEl.innerHTML = "";
     if (!S.downloads.length) {
       _dlListEl.appendChild(el("div", { class: "cvt-empty" }, "No downloads yet."));
-      return;
+    } else {
+      var frag = document.createDocumentFragment();
+      S.downloads.forEach(function(j) { frag.appendChild(_jobRow(j)); });
+      _dlListEl.appendChild(frag);
     }
-    var frag = document.createDocumentFragment();
-    S.downloads.forEach(function(j) { frag.appendChild(_jobRow(j)); });
-    _dlListEl.appendChild(frag);
-  }).catch(function() {});
 
-  // Adaptive heartbeat: only poll when visible and active
-  if (_dlTimer) clearInterval(_dlTimer);
-  if (_activeJobs > 0 && !document.hidden) {
-    _dlTimer = setInterval(_pollDl, 1500);
-  } else {
-    _dlTimer = null;
-  }
+    // Adaptive heartbeat: only poll when visible and active
+    if (_dlTimer) clearInterval(_dlTimer);
+    if (_activeJobs > 0 && !document.hidden) {
+      _dlTimer = setInterval(_pollDl, 1500);
+    } else {
+      _dlTimer = null;
+    }
+  }).catch(function() {});
+}
+
+function _ensureDlPolling() {
+  if (!_dlListEl) return;
+  if (!_dlTimer) { _pollDl(); }
 }
 
 function _jobRow(j) {
