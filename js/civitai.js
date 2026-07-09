@@ -963,9 +963,6 @@ function openLocalDetail(m, grid, filterIn) {
 
   var isNsfw = _matchNsfw(m, { hasPG13:true, hasR:true, hasX:true, hasXXX:true }) && window.__nsfwBlurEnabled !== false;
 
-  // Prompt display area below gallery
-  var pArea = el("div", { class: "cvt-prompt-area", style: { flexShrink:0, marginTop:"6px", fontSize:"11px", lineHeight:"1.5", display:"none", flexDirection:"column", gap:"4px" } });
-  left.appendChild(pArea);
 
   // Fetch all previews from server
   if (m.path) {
@@ -995,48 +992,6 @@ function openLocalDetail(m, grid, filterIn) {
           imgEl.addEventListener("mouseenter", function() { this.style.filter = "none"; });
           imgEl.addEventListener("mouseleave", function() { this.style.filter = ""; });
         }
-        imgEl.onmouseenter = function() {
-          // Show prompt info below gallery
-          pArea.style.display = "flex";
-          pArea.innerHTML = "";
-          if (prompt) {
-            pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
-              el("label", {}, "Prompt"),
-              el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(prompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", wordBreak:"break-word" } }, prompt));
-          }
-          if (negPrompt) {
-            pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"2px" } },
-              el("label", {}, "Negative"),
-              el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(negPrompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", wordBreak:"break-word" } }, negPrompt));
-          }
-          var metaParts = [];
-          if (meta.width && meta.height) metaParts.push(meta.width + "x" + meta.height);
-          if (meta.seed) metaParts.push("S:" + meta.seed);
-          if (meta.sampler) metaParts.push(meta.sampler);
-          if (meta.steps) metaParts.push(meta.steps + " steps");
-          if (metaParts.length) {
-            pArea.appendChild(el("div", { style: { fontSize:"9px", opacity:".6", marginTop:"2px" } }, metaParts.join(" \u00B7 ")));
-          }
-          // "Use in workflow" button for local detail gallery
-          if (prompt || negPrompt) {
-            var localUseBtn = el("button", { class: "cvt-btn", style: { marginTop:"6px", width:"100%", fontSize:"11px" } }, "\u26A1 Use in workflow");
-            localUseBtn.onclick = function(e) {
-              e.stopPropagation();
-              _api("/civitai/prompt-fetcher", {
-                method: "POST",
-                body: JSON.stringify({ positive: prompt || "", negative: negPrompt || "" })
-              }).then(function() {
-                _toast("\u26A1 Prompts sent to Prompt Fetcher node!", "ok");
-              }).catch(function(err) { _toast("Failed: " + err.message, "error"); });
-            };
-            pArea.appendChild(localUseBtn);
-          }
-          if (!prompt && !negPrompt && !metaParts.length) {
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text-mute)", fontSize:"10px" } }, "No generation data for this image"));
-          }
-        };
         imgEl.onclick = function(e) {
           e.stopPropagation();
           // Adapt local image format to lightbox format (expects img.meta.prompt etc.)
