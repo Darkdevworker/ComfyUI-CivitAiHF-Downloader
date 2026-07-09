@@ -172,10 +172,13 @@ function _api(path, opts) {
   }
   var p = api.fetchApi(path, opts || {}).then(function(r) {
     if (!r.ok) {
-      var err = new Error("HTTP " + r.status);
-      err.status = r.status;
-      err.transient = [408, 425, 429, 500, 502, 503, 504].indexOf(r.status) >= 0;
-      throw err;
+      return r.json().catch(function(){return {};}).then(function(body) {
+        var msg = (body && body.error) ? body.error : ("HTTP " + r.status);
+        var err = new Error(msg);
+        err.status = r.status;
+        err.transient = [408, 425, 429, 500, 502, 503, 504].indexOf(r.status) >= 0;
+        throw err;
+      });
     }
     return r.json().catch(function() { return {}; });
   }).then(function(json) {
