@@ -668,7 +668,7 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
   right.appendChild(filesList);
 
   // ---- Description pane (collapsible) ----
-  var desc = el("div", { class: "cvt-desc", style: { flexShrink:0, flex:"none", maxHeight:"none" } });
+  var desc = el("div", { class: "cvt-desc" });
   var descText = model.description || "";
   desc.innerHTML = descText || "<i>(no description)</i>";
   right.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
