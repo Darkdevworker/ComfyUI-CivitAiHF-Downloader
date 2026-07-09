@@ -374,13 +374,14 @@ function buildUI() {
     document.body.appendChild(overlay);
   }
 
-  // Load saved theme
+  // Load saved settings
   _api("/civitai/settings").then(function(cfg) {
-    if (cfg.theme === "light") {
-      root.classList.add("light");
-      themeBtn.textContent = "\uD83C\uDF19";
-    }
+    if (cfg.theme === "light") { root.classList.add("light"); themeBtn.textContent = "\uD83C\uDF19"; }
     if (cfg.compact_grid) root.classList.add("compact");
+    S.settings.saveMeta = cfg.save_metadata !== false;
+    S.settings.savePrev = cfg.save_preview !== false;
+    S.settings.verifySha = cfg.verify_sha256 !== false;
+    S.settings.nsfwBlur = cfg.nsfw_blur !== false;
   }).catch(function(){});
 
   return root;
@@ -761,6 +762,8 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     el("input", { type: "text", placeholder: "custom name", style: { width:"90px", marginLeft:"3px", fontSize:"9px", padding:"1px 3px" } }));
   var metaCb = el("input", { type: "checkbox" });
   var prevCb = el("input", { type: "checkbox" });
+  metaCb.checked = S.settings.saveMeta;
+  prevCb.checked = S.settings.savePrev;
   var metaLbl = el("label", { class: "check", style: { gap:"2px", margin:0 } }, metaCb, " Metadata");
   var prevLbl = el("label", { class: "check", style: { gap:"2px", margin:0 } }, prevCb, " Preview");
   checksRow.appendChild(overwriteLbl); checksRow.appendChild(fnameLbl); checksRow.appendChild(metaLbl); checksRow.appendChild(prevLbl);
@@ -1467,6 +1470,8 @@ function _hfDetail(repoIdOrData) {
     // Metadata + preview checkboxes
     var metaCb = el("input", { type: "checkbox" });
     var prevCb = el("input", { type: "checkbox" });
+    metaCb.checked = S.settings.saveMeta;
+    prevCb.checked = S.settings.savePrev;
     right.appendChild(el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"6px" } }, metaCb, " Save .civitai.json"));
     right.appendChild(el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } }, prevCb, " Save preview"));
 
@@ -1951,7 +1956,7 @@ function renderSettings(pane) {
   hfSaveBtn.onclick=function(){var v=hfIn.value.trim();if(!v){hfStatus.innerHTML="<span style='color:#e88'>Paste a token first.</span>";return;}hfSaveBtn.disabled=true;hfStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:v})}).then(function(r){hfIn.value="";if(r.has_token){hfBadge.className="cvt-settings-badge active";hfBadge.textContent="connected";}hfStatus.innerHTML=r.has_token?"<span style='color:#6d6'>\u2713 Token saved</span>":"<span style='color:#cc9'>Token cleared</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){hfSaveBtn.disabled=false;});};
   hfClearBtn.onclick=function(){if(!confirm("Remove the saved HF token?"))return;_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:""})}).then(function(){hfIn.value="";hfBadge.className="cvt-settings-badge";hfBadge.textContent="not set";hfStatus.innerHTML="<span style='color:#cc9'>Token removed</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";});};
   hfIn.onkeydown=function(e){if(e.key==="Enter")hfSaveBtn.click();};
-  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,compact_grid:cbCompact.checked,theme:S.root.classList.contains("light")?"light":"dark"};_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
+  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,compact_grid:cbCompact.checked,theme:S.root.classList.contains("light")?"light":"dark"};S.settings.saveMeta=cbMeta.checked;S.settings.savePrev=cbPrev.checked;S.settings.verifySha=cbHash.checked;S.settings.nsfwBlur=cbNsfwBlur.checked;_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
   testBtn.onclick=function(){testBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Testing\u2026</span>";_api("/civitai/ping").then(function(r){sStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 Connected \u2014 API key recognised</span>":"<span style='color:#cc9'>Connected \u2014 no API key (public only)</span>";}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>\u2717 Failed: "+e.message+"</span>";}).then(function(){testBtn.disabled=false;});};
   clearCacheBtn.onclick=function(){clearCacheBtn.disabled=true;_api("/civitai/cache/clear",{method:"POST"}).then(function(r){_cache.clear();_toast("Cache cleared");sStatus.innerHTML="<span style='color:#6d6'>\u2713 Cache cleared</span>";}).catch(function(e){_toast("Clear failed: "+e.message,"error");}).then(function(){clearCacheBtn.disabled=false;});};
 }
