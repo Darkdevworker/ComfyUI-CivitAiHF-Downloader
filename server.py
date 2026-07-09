@@ -334,7 +334,7 @@ async def start_download(request):
         # For metadata-only jobs, just fetch & save metadata then return
         if metadata_only:
             asyncio.ensure_future(_save_metadata_and_preview(
-                model_version_id, save_path, save_metadata, save_preview, domain
+                model_version_id, save_path, save_metadata, save_preview, domain, ""
             ))
             return web.json_response({"task_id": "meta_" + str(model_version_id)})
 
@@ -391,11 +391,20 @@ async def start_download(request):
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "completed"
                     DOWNLOAD_TASKS[task_id]["progress"] = 100
-                # Fetch and save metadata / preview after download
-                if save_metadata or save_preview:
-                    await _save_metadata_and_preview(
-                        model_version_id, save_path, save_metadata, save_preview, domain
+                # Always compute SHA256 hash after download
+                file_hash = ""
+                try:
+                    file_hash = await loop.run_in_executor(
+                        None, utils.CivitaiAPIUtils.calculate_sha256, save_path
                     )
+                    if task_id in DOWNLOAD_TASKS:
+                        DOWNLOAD_TASKS[task_id]["hash"] = file_hash
+                except Exception:
+                    pass
+                # Fetch and save metadata / preview after download
+                await _save_metadata_and_preview(
+                    model_version_id, save_path, save_metadata, save_preview, domain, file_hash
+                )
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
@@ -407,7 +416,7 @@ async def start_download(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-async def _save_metadata_and_preview(model_version_id, save_path, save_metadata, save_preview, domain):
+async def _save_metadata_and_preview(model_version_id, save_path, save_metadata, save_preview, domain, file_hash=""):
     """Fetch Civitai version info and save .civitai.json + all preview images."""
     try:
         vi = utils.CivitaiAPIUtils.get_model_version_info_by_id(
@@ -421,32 +430,40 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
     base = os.path.splitext(save_path)[0]
     loop = asyncio.get_event_loop()
 
-    # Enrich metadata with model description from parent model if available
-    if save_metadata:
-        meta_path = base + ".civitai.json"
-        if not os.path.isfile(meta_path):
+    # Inject computed hash into version info
+    if file_hash:
+        if "hashes" not in vi:
+            vi["hashes"] = {}
+        vi["hashes"]["SHA256"] = file_hash
+        files = vi.get("files", [])
+        if files and isinstance(files[0], dict):
+            if "hashes" not in files[0]:
+                files[0]["hashes"] = {}
+            files[0]["hashes"]["SHA256"] = file_hash
+
+    # Always save .civitai.json with hash
+    meta_path = base + ".civitai.json"
+    try:
+        # Enrich with full model description if save_metadata is on
+        model_id = vi.get("modelId") or (vi.get("model") or {}).get("id")
+        if model_id and save_metadata:
             try:
-                # Fetch model info too for full description
-                model_id = vi.get("modelId") or (vi.get("model") or {}).get("id")
-                if model_id:
-                    try:
-                        mresp = utils.CivitaiAPIUtils._request_with_retry(
-                            f"https://{domain}/api/v1/models/{model_id}"
-                        )
-                        model_data = mresp.json()
-                        # Merge model-level description into version info
-                        if "model" not in vi:
-                            vi["model"] = model_data
-                        else:
-                            vi["model"]["description"] = model_data.get("description", "")
-                            vi["model"]["name"] = model_data.get("name", "")
-                    except Exception:
-                        pass
-                await loop.run_in_executor(None, _write_json, meta_path, vi)
+                mresp = utils.CivitaiAPIUtils._request_with_retry(
+                    f"https://{domain}/api/v1/models/{model_id}"
+                )
+                model_data = mresp.json()
+                if "model" not in vi:
+                    vi["model"] = model_data
+                else:
+                    vi["model"]["description"] = model_data.get("description", "")
+                    vi["model"]["name"] = model_data.get("name", "")
             except Exception:
                 pass
+        await loop.run_in_executor(None, _write_json, meta_path, vi)
+    except Exception:
+        pass
 
-    # Download all preview images with their prompts in filenames
+    # Download all preview images
     if save_preview:
         images = vi.get("images", [])
         dl_tasks = []
