@@ -184,9 +184,26 @@ async def local_preview(request):
         return web.Response(status=500, text=str(e))
 
 
+_preview_cache_dir = os.path.join(os.path.dirname(__file__), ".preview_cache")
+os.makedirs(_preview_cache_dir, exist_ok=True)
+
 def _resize_preview(path, max_w, ext):
     from PIL import Image
     import io
+    import hashlib as _hl
+
+    # Disk cache: skip resize if cached version exists and is newer
+    cache_key = _hl.md5(f"{path}:{max_w}".encode()).hexdigest()
+    cache_ext = ".webp" if ext != ".png" else ".png"
+    cache_path = os.path.join(_preview_cache_dir, cache_key + cache_ext)
+    try:
+        src_mtime = os.path.getmtime(path)
+        if os.path.isfile(cache_path) and os.path.getmtime(cache_path) >= src_mtime:
+            with open(cache_path, "rb") as f:
+                return f.read()
+    except Exception:
+        pass
+
     img = Image.open(path)
     img.load()
     if img.width > max_w:
@@ -194,12 +211,18 @@ def _resize_preview(path, max_w, ext):
         new_h = int(img.height * ratio)
         img = img.resize((max_w, new_h), Image.LANCZOS)
     out = io.BytesIO()
-    save_kw = {"format": "PNG" if ext == ".png" else "WEBP"}
-    if ext != ".png":
-        save_kw["format"] = "WEBP"
-        save_kw["quality"] = 85
-    img.save(out, **save_kw)
-    return out.getvalue()
+    if ext == ".png":
+        img.save(out, format="PNG")
+    else:
+        img.save(out, format="WEBP", quality=80)
+    data = out.getvalue()
+
+    try:
+        with open(cache_path, "wb") as f:
+            f.write(data)
+    except Exception:
+        pass
+    return data
 
 
 @routes.get("/civitai/model-versions")
@@ -481,20 +504,31 @@ async def cancel_download(request):
 
 # ── Local Models ──────────────────────────────────────────────────────
 
+_local_models_cache = {"data": None, "time": 0}
+_LOCAL_CACHE_TTL = 30  # seconds
+
 @routes.get("/civitai/local-models")
 async def local_models(request):
     try:
         force = request.query.get("force_refresh", "false").lower() == "true"
+        now = time.time()
+        if not force and _local_models_cache["data"] is not None and (now - _local_models_cache["time"]) < _LOCAL_CACHE_TTL:
+            models = _local_models_cache["data"]
+            return web.json_response({"models": models, "total": len(models)})
         loop = asyncio.get_event_loop()
-        models = await loop.run_in_executor(
-            None, utils.scan_local_models_direct
-        )
+        models = await loop.run_in_executor(None, utils.scan_local_models_direct)
+        _local_models_cache["data"] = models
+        _local_models_cache["time"] = now
         # Fire background DB sync if force_refresh so next load has hashes
         if force:
             asyncio.ensure_future(_bg_local_sync())
         return web.json_response({"models": models, "total": len(models)})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+        # Return cached data if available on error
+        if _local_models_cache["data"] is not None:
+            models = _local_models_cache["data"]
+            return web.json_response({"models": models, "total": len(models), "cached": True})
+        return web.json_response({"models": [], "total": 0, "error": str(e)})
 
 
 async def _bg_local_sync():
