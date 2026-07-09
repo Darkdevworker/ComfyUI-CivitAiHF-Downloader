@@ -1130,7 +1130,13 @@ async def hf_download(request):
         os.makedirs(dest_dir, exist_ok=True)
         dest = os.path.join(dest_dir, filename)
         if os.path.exists(dest) and not overwrite:
-            return web.json_response({"error": "File exists", "path": dest}, status=409)
+            # Auto-rename: file.safetensors -> file_2.safetensors
+            base_name, ext = os.path.splitext(filename)
+            counter = 2
+            while os.path.exists(dest):
+                dest = os.path.join(dest_dir, f"{base_name}_{counter}{ext}")
+                counter += 1
+            filename = os.path.basename(dest)
         url = f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(path, safe='/')}"
         task_id = f"hf_{int(time.time())}_{hashlib.md5(f'{repo_id}:{path}'.encode()).hexdigest()[:8]}"
         DOWNLOAD_TASKS[task_id] = {
