@@ -1003,13 +1003,13 @@ function openLocalDetail(m, grid, filterIn) {
             pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
               el("label", {}, "Prompt"),
               el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(prompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"80px", overflowY:"auto", wordBreak:"break-word" } }, prompt));
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", wordBreak:"break-word" } }, prompt));
           }
           if (negPrompt) {
             pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"2px" } },
               el("label", {}, "Negative"),
               el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(negPrompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"60px", overflowY:"auto", wordBreak:"break-word" } }, negPrompt));
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", wordBreak:"break-word" } }, negPrompt));
           }
           var metaParts = [];
           if (meta.width && meta.height) metaParts.push(meta.width + "x" + meta.height);
@@ -1553,7 +1553,7 @@ function _hfDetail(repoIdOrData) {
 
     // File list on left
     left.appendChild(el("label", { style: { marginTop:"8px" } }, "Files"));
-    var fl = el("div", { class: "cvt-files-list", style: { maxHeight:"60vh", flex:1, marginTop:"4px" } });
+    var fl = el("div", { class: "cvt-files-list", style: { flex:"0 0 auto", marginTop:"4px" } });
     files.forEach(function(f) {
       var fn = f.rfilename || f.path || "";
       var isWeight = /\.(safetensors|ckpt|pt|pth|gguf|bin)$/i.test(fn);
