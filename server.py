@@ -1092,19 +1092,29 @@ print("[ComfyUI-CivitAiHF-Downloader] Server routes registered")
 @routes.get("/civitai/folders")
 async def list_folders(request):
     try:
+        all_types = [
+            "checkpoints", "loras", "vae", "controlnet", "embeddings",
+            "upscale_models", "clip_vision", "unet", "diffusion_models",
+            "instantid", "ipadapter", "photomaker", "style_models",
+            "text_encoders", "wildcards", "audio_encoders",
+            "background_removal", "clip", "configs", "detection",
+            "diffusers", "frame_interpolation", "geometry_estimation",
+            "gligen", "latent_upscale_models", "model_patches",
+            "optical_flow", "vae_approx",
+        ]
         folders = []
-        for sub in ["checkpoints", "loras", "vae", "controlnet", "embeddings",
-                     "upscale_models", "clip_vision", "unet", "diffusion_models",
-                     "instantid", "ipadapter", "photomaker", "style_models",
-                     "text_encoders", "wildcards", "audio_encoders",
-                     "background_removal", "clip", "configs", "detection",
-                     "diffusers", "frame_interpolation", "geometry_estimation",
-                     "gligen", "latent_upscale_models", "model_patches",
-                     "optical_flow", "vae_approx"]:
+        for sub in all_types:
             sub_path = os.path.join(folder_paths.models_dir, sub)
-            if os.path.isdir(sub_path):
-                folders.append(sub)
-        return web.json_response({"folders": folders})
+            exists = os.path.isdir(sub_path)
+            folders.append({"name": sub, "exists": exists})
+        # Also discover any extra subfolders in models_dir not in our list
+        try:
+            for entry in os.scandir(folder_paths.models_dir):
+                if entry.is_dir() and entry.name not in all_types and not entry.name.startswith('.'):
+                    folders.append({"name": entry.name, "exists": True})
+        except Exception:
+            pass
+        return web.json_response({"folders": [f["name"] for f in folders]})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
