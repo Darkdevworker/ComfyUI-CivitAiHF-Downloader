@@ -838,21 +838,18 @@ function openLocalDetail(m, grid, filterIn) {
   var right = el("div", { class: "right" });
   modal.appendChild(left); modal.appendChild(right);
 
-  // Left: model info + preview
+  // Left: title + gallery (same layout as Browse modal)
   left.appendChild(el("h2", {}, m.name || ""));
+  left.appendChild(el("div", { class: "sub" }, (m.type || "") + (m.base_model ? " \u00B7 " + m.base_model : "") + (m.size ? " \u00B7 " + m.size : "")));
+  var gallery = el("div", { class: "gallery" });
+  gallery.innerHTML = '<div class="cvt-spinner"></div>';
+  left.appendChild(gallery);
 
   var isNsfw = _matchNsfw(m, { hasPG13:true, hasR:true, hasX:true, hasXXX:true }) && window.__nsfwBlurEnabled !== false;
 
-  // Gallery of all local preview images
-  var previewEl = el("img", { style: { width:"100%", aspectRatio:"3/4", objectFit:"cover", display:"block", borderRadius:"var(--civ-radius-sm)", background:"#141414", marginBottom:"6px", maxHeight:"35vh" } });
-  if (isNsfw) {
-    previewEl.style.filter = "blur(20px) grayscale(0.5)";
-    previewEl.addEventListener("mouseenter", function() { this.style.filter = "none"; });
-    previewEl.addEventListener("mouseleave", function() { this.style.filter = "blur(20px) grayscale(0.5)"; });
-  }
-  left.appendChild(previewEl);
-  var gal = el("div", { style: { display:"flex", gap:"6px", overflowX:"auto", paddingBottom:"4px", maxWidth:"100%" } });
-  left.appendChild(gal);
+  // Prompt display area below gallery
+  var pArea = el("div", { class: "cvt-prompt-area", style: { flexShrink:0, marginTop:"6px", fontSize:"11px", lineHeight:"1.5", display:"none", flexDirection:"column", gap:"4px" } });
+  left.appendChild(pArea);
 
   // Fetch all previews from server
   if (m.path) {
@@ -861,63 +858,90 @@ function openLocalDetail(m, grid, filterIn) {
       if (!imgs.length && m.preview) {
         imgs = [{ url: "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=300", prompt: "", negativePrompt: "" }];
       }
-      if (imgs.length) {
-        var firstUrl = (typeof imgs[0] === "object" ? imgs[0].url : imgs[0]) || "";
-        if (firstUrl) previewEl.src = firstUrl;
+      gallery.innerHTML = "";
+      if (!imgs.length) {
+        gallery.innerHTML = '<div style="grid-column:1/-1" class="cvt-empty">No preview images</div>';
+        return;
       }
+      var gFrag = document.createDocumentFragment();
       imgs.forEach(function(im) {
         var imgSrc = (typeof im === "object") ? im.url : im;
         var prompt = (typeof im === "object") ? (im.prompt || "") : "";
         var negPrompt = (typeof im === "object") ? (im.negativePrompt || "") : "";
         var meta = (typeof im === "object") ? im : {};
-        var thumb = el("img", {
-          src: imgSrc,
-          style: { height:"70px", borderRadius:"var(--civ-radius-sm)", cursor:"pointer", flexShrink:0, objectFit:"cover", border:"2px solid transparent" },
-          loading: "lazy"
+        var nsfw = isNsfw;
+        var imgEl = el("img", {
+          src: imgSrc, loading: "lazy", decoding: "async",
+          class: nsfw ? "nsfw" : "",
+          style: { cursor: "pointer" }
         });
-        if (isNsfw) {
-          thumb.style.filter = "blur(8px) grayscale(0.5)";
-          thumb.addEventListener("mouseenter", function() { this.style.filter = "none"; });
-          thumb.addEventListener("mouseleave", function() { this.style.filter = "blur(8px) grayscale(0.5)"; });
+        if (nsfw) {
+          imgEl.addEventListener("mouseenter", function() { this.style.filter = "none"; });
+          imgEl.addEventListener("mouseleave", function() { this.style.filter = ""; });
         }
-        thumb.onmouseenter = function() {
-          previewEl.src = imgSrc;
-          var pArea = left.querySelector(".cvt-prompt-area");
-          if (!pArea) {
-            pArea = el("div", { class: "cvt-prompt-area", style: { marginTop:"4px", fontSize:"11px", lineHeight:"1.5", display:"flex", flexDirection:"column", gap:"4px" } });
-            left.appendChild(pArea);
-          }
+        imgEl.onmouseenter = function() {
+          // Show prompt info below gallery
+          pArea.style.display = "flex";
           pArea.innerHTML = "";
           if (prompt) {
             pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
               el("label", {}, "Prompt"),
               el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(prompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"100px", overflowY:"auto", wordBreak:"break-word" } }, prompt));
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"80px", overflowY:"auto", wordBreak:"break-word" } }, prompt));
           }
           if (negPrompt) {
-            pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } },
-              el("label", {}, "Negative Prompt"),
+            pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"2px" } },
+              el("label", {}, "Negative"),
               el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(negPrompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-            pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"80px", overflowY:"auto", wordBreak:"break-word" } }, negPrompt));
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"60px", overflowY:"auto", wordBreak:"break-word" } }, negPrompt));
           }
           var metaParts = [];
           if (meta.width && meta.height) metaParts.push(meta.width + "x" + meta.height);
           if (meta.seed) metaParts.push("S:" + meta.seed);
+          if (meta.sampler) metaParts.push(meta.sampler);
+          if (meta.steps) metaParts.push(meta.steps + " steps");
           if (metaParts.length) {
             pArea.appendChild(el("div", { style: { fontSize:"9px", opacity:".6", marginTop:"2px" } }, metaParts.join(" \u00B7 ")));
           }
+          if (!prompt && !negPrompt && !metaParts.length) {
+            pArea.appendChild(el("div", { style: { color:"var(--civ-text-mute)", fontSize:"10px" } }, "No generation data for this image"));
+          }
         };
-        gal.appendChild(thumb);
+        imgEl.onclick = function(e) {
+          e.stopPropagation();
+          // Adapt local image format to lightbox format (expects img.meta.prompt etc.)
+          var lightboxImg = {
+            url: imgSrc,
+            width: meta.width || 0,
+            height: meta.height || 0,
+            meta: {
+              prompt: prompt || "",
+              negativePrompt: negPrompt || "",
+              seed: meta.seed,
+              sampler: meta.sampler,
+              steps: meta.steps,
+              cfgScale: meta.cfgScale || meta.cfg_scale,
+              Model: meta.model || meta.Model
+            }
+          };
+          openLightbox(lightboxImg, m);
+        };
+        imgEl.title = "Click to view full image + generation params";
+        gFrag.appendChild(imgEl);
       });
+      gallery.appendChild(gFrag);
+    }).catch(function() {
+      gallery.innerHTML = '<div class="cvt-empty">Failed to load previews</div>';
     });
   } else if (m.preview) {
-    previewEl.src = "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=600";
-    var thumb = el("img", {
-      src: previewEl.src,
-      style: { height:"70px", borderRadius:"var(--civ-radius-sm)", flexShrink:0, objectFit:"cover" },
-      loading: "lazy"
+    gallery.innerHTML = "";
+    var imgEl = el("img", {
+      src: "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=500",
+      loading: "lazy", class: isNsfw ? "nsfw" : ""
     });
-    gal.appendChild(thumb);
+    gallery.appendChild(imgEl);
+  } else {
+    gallery.innerHTML = '<div style="grid-column:1/-1" class="cvt-empty">No preview images</div>';
   }
 
   // Right: details
@@ -968,49 +992,33 @@ function openLocalDetail(m, grid, filterIn) {
 
         // Gallery of all Civitai images with prompts
         if (d.images && d.images.length) {
-          var galLabel = el("label", { style: { marginTop:"8px", display:"block" } }, "Gallery");
+          var galLabel = el("label", { style: { marginTop:"8px", display:"block" } }, "Civitai Gallery");
           rightContent.appendChild(galLabel);
-          var gal = el("div", { style: { display:"flex", gap:"6px", overflowX:"auto", paddingBottom:"4px", maxWidth:"100%" } });
+          var civGal = el("div", { style: { display:"flex", gap:"6px", overflowX:"auto", paddingBottom:"4px", maxWidth:"100%" } });
           d.images.forEach(function(im) {
             var imgSrc = (typeof im === "object") ? im.url : im;
-            var meta = (typeof im === "object") ? (im.meta || {}) : {};
-            var prompt = meta.prompt || "";
-            var negPrompt = meta.negativePrompt || "";
-            var thumb = el("img", {
+            var cMeta = (typeof im === "object") ? (im.meta || {}) : {};
+            var prompt = cMeta.prompt || "";
+            var negPrompt = cMeta.negativePrompt || "";
+            var cThumb = el("img", {
               src: _thumbUrl(imgSrc, 300), loading:"lazy",
-              style: { height:"100px", borderRadius:"var(--civ-radius-sm)", cursor:"pointer", flexShrink:0, objectFit:"cover" },
+              style: { height:"80px", borderRadius:"var(--civ-radius-sm)", cursor:"pointer", flexShrink:0, objectFit:"cover" },
               title: prompt ? prompt.slice(0, 120) : ""
             });
-            thumb.onmouseenter = function() {
-              if (previewEl) previewEl.src = _thumbUrl(imgSrc, 500);
-              var pArea = rightContent.querySelector(".cvt-prompt-area");
-              if (!pArea) {
-                pArea = el("div", { class: "cvt-prompt-area", style: { marginTop:"6px", fontSize:"11px", lineHeight:"1.5", display:"flex", flexDirection:"column", gap:"4px" } });
-                rightContent.appendChild(pArea);
-              }
-              pArea.innerHTML = "";
-              if (prompt) {
-                pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
-                  el("label", {}, "Prompt"),
-                  el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(prompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-                pArea.appendChild(el("div", { style: { color:"var(--civ-text)", background:"rgba(255,255,255,.04)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"120px", overflowY:"auto", wordBreak:"break-word" } }, prompt));
-              }
-              if (negPrompt) {
-                pArea.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } },
-                  el("label", {}, "Negative Prompt"),
-                  el("button", { class: "cvt-btn ghost", style: { padding:"1px 5px", fontSize:"9px", lineHeight:"1.2" }, onclick: function(e) { e.stopPropagation(); navigator.clipboard.writeText(negPrompt).then(function() { _toast("Copied", "ok"); }).catch(function() {}); } }, "\uD83D\uDCCB")));
-                pArea.appendChild(el("div", { style: { color:"var(--civ-text-dim)", background:"rgba(255,255,255,.03)", padding:"6px 8px", borderRadius:"var(--civ-radius-sm)", maxHeight:"100px", overflowY:"auto", wordBreak:"break-word" } }, negPrompt));
-              }
+            cThumb.onclick = function(e) {
+              e.stopPropagation();
+              var lightboxImg = { url: imgSrc, meta: cMeta, width: im.width || 0, height: im.height || 0 };
+              openLightbox(lightboxImg, { name: m.name, creator: { username: creatorName } });
             };
-            gal.appendChild(thumb);
+            civGal.appendChild(cThumb);
           });
-          rightContent.appendChild(gal);
+          rightContent.appendChild(civGal);
 
           // Show model-level description if available
           var fullDesc = modelData.description || d.description || "";
           if (fullDesc && fullDesc !== m.description) {
             rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
-            var descEl = el("div", { class: "cvt-desc", style: { minHeight:"30px", maxHeight:"120px" } });
+            var descEl = el("div", { class: "cvt-desc" });
             descEl.textContent = fullDesc;
             rightContent.appendChild(descEl);
           }
@@ -1039,7 +1047,7 @@ function openLocalDetail(m, grid, filterIn) {
   // Description from metadata
   if (m.description) {
     rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
-    var desc = el("div", { class: "cvt-desc", style: { minHeight:"40px", maxHeight:"150px" } });
+    var desc = el("div", { class: "cvt-desc" });
     desc.textContent = m.description;
     rightContent.appendChild(desc);
   }
