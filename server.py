@@ -871,6 +871,12 @@ async def hf_lookup(request):
         repo_id = request.query.get("repo", "")
         if not repo_id:
             return web.json_response({"error": "Missing repo"}, status=400)
+        # Server-side URL parsing as safety net
+        import re as _re
+        url_match = _re.search(r'huggingface\.co/([\w.-]+/[\w.-]+)', repo_id)
+        if url_match:
+            repo_id = url_match.group(1)
+        repo_id = _re.sub(r'/(tree|blob|resolve|blame|commits|discussions|files)/.*$', '', repo_id).strip('/')
         if repo_id.find("/") < 0:
             return web.json_response({"error": "Invalid repo format (use user/repo)"}, status=400)
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -879,16 +885,29 @@ async def hf_lookup(request):
             headers["Authorization"] = f"Bearer {token}"
         api_url = f"https://huggingface.co/api/models/{repo_id}"
         loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: requests.get(api_url, timeout=15, headers=headers)
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return web.json_response(data)
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            return web.json_response({"error": "Repo not found"}, status=404)
-        return web.json_response({"error": f"HTTP {e.response.status_code}"}, status=e.response.status_code)
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: requests.get(api_url, timeout=15, headers=headers)
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return web.json_response(data)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                # Fallback: try resolving a known file to check if repo exists
+                try:
+                    check_url = f"https://huggingface.co/{repo_id}/resolve/main/config.json"
+                    r2 = await loop.run_in_executor(
+                        None, lambda: requests.head(check_url, timeout=10, headers=headers, allow_redirects=True)
+                    )
+                    if r2.status_code < 400:
+                        return web.json_response({"id": repo_id, "gated": True})
+                except Exception:
+                    pass
+                return web.json_response({"error": f"Repo not found: {repo_id}. If gated, set HF token in Settings."}, status=404)
+            if e.response.status_code == 401:
+                return web.json_response({"error": "Unauthorized \u2014 set your HF token in Settings"}, status=401)
+            return web.json_response({"error": f"HTTP {e.response.status_code}"}, status=e.response.status_code)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
