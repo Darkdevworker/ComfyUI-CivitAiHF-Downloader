@@ -79,12 +79,17 @@ async def search_civitai(request):
             params["tag"] = tag
 
         loop = asyncio.get_event_loop()
+        cache_key = f"csearch:{query}:{model_type}:{sort}:{period}:{base_models}:{nsfw}:{cursor}:{page}:{limit}"
+        cached = _api_cache.get(cache_key)
+        if cached and (time.time() - cached["t"]) < 60:
+            return web.json_response(cached["v"])
         def _fetch_search():
             return utils.CivitaiAPIUtils._request_with_retry(
                 f"https://{domain}/api/v1/models", params=params
             )
         resp = await loop.run_in_executor(None, _fetch_search)
         data = resp.json()
+        _api_cache[cache_key] = {"v": data, "t": time.time()}
         return web.json_response(data)
     except Exception as e:
         return web.json_response({"items": [], "total": 0, "error": str(e)})

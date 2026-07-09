@@ -373,17 +373,30 @@ SAMPLER_SCHEDULER_MAP = {
 
 
 class CivitaiAPIUtils:
+    _session = None
+
+    @classmethod
+    def _get_session(cls):
+        if cls._session is None:
+            cls._session = requests.Session()
+            cls._session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+            })
+            adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
+            cls._session.mount("https://", adapter)
+            cls._session.mount("http://", adapter)
+        return cls._session
+
     @staticmethod
-    def _request_with_retry(url, params=None, timeout=15, retries=3, delay=5):
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-        }
+    def _request_with_retry(url, params=None, timeout=10, retries=2, delay=2):
+        session = CivitaiAPIUtils._get_session()
+        headers = {}
         api_key = db_manager.get_setting("civitai_api_key")
         if api_key and isinstance(api_key, str):
             headers["Authorization"] = f"Bearer {api_key}"
         for i in range(retries + 1):
             try:
-                resp = requests.get(url, params=params, timeout=timeout, headers=headers)
+                resp = session.get(url, params=params, timeout=(5, timeout), headers=headers)
                 resp.raise_for_status()
                 return resp
             except requests.exceptions.HTTPError as e:
@@ -393,7 +406,10 @@ class CivitaiAPIUtils:
                 else:
                     raise
             except requests.exceptions.RequestException as e:
-                time.sleep(delay)
+                if i < retries:
+                    time.sleep(delay)
+                else:
+                    raise
         raise Exception(f"Failed to fetch {url} after {retries} retries.")
 
     @staticmethod
