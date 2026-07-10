@@ -3,6 +3,7 @@ import json
 import os
 import time
 import re
+import shutil
 import urllib.request
 import urllib.parse
 import hashlib
@@ -329,7 +330,7 @@ async def start_download(request):
 
         domain = utils._get_active_domain()
 
-        if model_version_id and not download_url:
+        if model_version_id and str(model_version_id).strip() and not download_url:
             download_url = f"https://{domain}/api/download/models/{model_version_id}"
 
         if not download_url:
@@ -457,6 +458,16 @@ async def start_download(request):
 
 async def _save_metadata_and_preview(model_version_id, save_path, save_metadata, save_preview, domain, file_hash=""):
     """Fetch Civitai version info and save .civitai.json + all preview images."""
+    if not model_version_id:
+        # No version ID — just save hash if available
+        if file_hash:
+            try:
+                meta = {"hashes": {"SHA256": file_hash}}
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _write_json, os.path.splitext(save_path)[0] + ".civitai.json", meta)
+            except Exception:
+                pass
+        return
     try:
         vi = utils.CivitaiAPIUtils.get_model_version_info_by_id(
             int(model_version_id), domain
@@ -657,6 +668,11 @@ async def delete_model(request):
         except Exception:
             pass
 
+        # Invalidate local models cache
+        with _local_cache_lock:
+            _local_models_cache["data"] = None
+            _local_models_cache["time"] = 0
+
         return web.json_response({"success": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -826,7 +842,7 @@ async def auto_organize(request):
                 if os.path.exists(dest):
                     continue
                 try:
-                    os.rename(src, dest)
+                    shutil.move(src, dest)
                     for ext in [".civitai.json", ".preview.png"]:
                         s = src.replace(".safetensors", ext)
                         if os.path.exists(s):
@@ -980,12 +996,14 @@ async def get_settings(request):
 async def save_settings(request):
     try:
         data = await request.json()
-        for key in [
-            "save_metadata", "save_preview", "compute_sha", "nsfw_default",
-            "network_choice", "nsfw_blur", "theme", "compact_grid",
-        ]:
+        bool_keys = {"save_metadata", "save_preview", "compute_sha", "nsfw_blur", "compact_grid"}
+        str_keys = {"nsfw_default", "network_choice", "theme"}
+        for key in bool_keys:
             if key in data:
-                utils.db_manager.set_setting(key, data[key])
+                utils.db_manager.set_setting(key, bool(data[key]))
+        for key in str_keys:
+            if key in data:
+                utils.db_manager.set_setting(key, str(data[key]))
         if "civitai_api_key" in data:
             utils.db_manager.set_setting("civitai_api_key", data["civitai_api_key"])
         if "api_key" in data:

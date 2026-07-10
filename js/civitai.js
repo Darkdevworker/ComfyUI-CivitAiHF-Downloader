@@ -348,13 +348,13 @@ function buildUI() {
     else if (e.key === "ArrowDown") next = idx + cols;
     else if (e.key === "ArrowUp") next = idx - cols;
     else if (e.key === "Enter") { e.preventDefault(); card.click(); return; }
-    if (next >= 0 && next < cards.length) {
+    if (next >= 0 && next < cards.length && cards[next]) {
       e.preventDefault();
       cards[next].focus();
     }
   });
 
-  // Make cards focusable (observe grid for new cards)
+  // Make cards focusable (MutationObserver — modern API)
   var _cardObserver = new MutationObserver(function(muts) {
     muts.forEach(function(m) {
       m.addedNodes.forEach(function(n) {
@@ -364,11 +364,7 @@ function buildUI() {
       });
     });
   });
-  root.addEventListener("DOMNodeInserted", function(e) {
-    if (e.target.classList && e.target.classList.contains("cvt-card")) {
-      e.target.setAttribute("tabindex", "0");
-    }
-  }, true);
+  _cardObserver.observe(root, { childList: true, subtree: true });
 
   // Keyboard shortcuts help overlay
   function _showKBHelp() {
@@ -604,6 +600,7 @@ function renderBrowse(pane) {
   };
   nextBtn.onclick = function() {
     if (S.civitai.nextCursor) {
+      if (S.civitai.cursorStack.length > 50) S.civitai.cursorStack.shift();
       S.civitai.cursorStack.push(S.civitai.cursor);
       S.civitai.cursor = S.civitai.nextCursor;
       _runSearch();
@@ -1454,7 +1451,7 @@ function _hfDetail(repoIdOrData) {
     right.appendChild(filterRow);
 
     // File list as select
-    var fileSel = el("select", { size: "10", style: { width:"100%", marginTop:"4px", padding:"4px" } });
+    var fileSel = el("select", { size: "12", style: { width:"100%", marginTop:"4px", padding:"4px", minHeight:"180px" } });
     right.appendChild(fileSel);
 
     function fillFiles() {
@@ -1647,7 +1644,7 @@ function _pollDl() {
     } else {
       _dlTimer = null;
     }
-  }).catch(function() {});
+  }).catch(function(e) { console.warn("Download poll error:", e); });
 }
 
 function _ensureDlPolling() {
@@ -1891,7 +1888,7 @@ function renderSettings(pane) {
   var apiBadge = el("span", { class: "cvt-settings-badge" }, "not set");
   apiHeader.appendChild(apiBadge);
   apiGroup.appendChild(apiHeader);
-  apiGroup.appendChild(el("div", { class: "cvt-settings-hint" }, "Required for private/gated models. Get one at civitai.com/user/account \u2192 API Keys."));
+  apiGroup.appendChild(el("div", { class: "cvt-settings-hint" }, "Required for private/gated models. Get one at civitai.com/user/account \u2192 API Keys. Starts with civitai_"));
   var apiIn = el("input", { type: "password", placeholder: "Paste your Civitai API key\u2026", autocomplete: "off" });
   apiGroup.appendChild(apiIn);
   var apiBtns = el("div", { class: "cvt-settings-btns" });
