@@ -91,6 +91,7 @@ function _buildRatingCheckboxes(selectedStr, onChange) {
 //   item.nsfw: boolean fallback
 //   flags: { hasPG13, hasR, hasX, hasXXX, anyNsfw }
 function _matchNsfw(item, flags) {
+  if (!item) return false;
   // Quick boolean check — item has nsfw:true and user wants any NSFW level
   if (item.nsfw) { return flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX; }
   // Also check alternate keys
@@ -188,6 +189,25 @@ function _api(path, opts) {
   if (cacheKey) { _cache._inflight.set(cacheKey, p); p.then(function() { _cache._inflight.delete(cacheKey); }, function() { _cache._inflight.delete(cacheKey); }); }
   return p;
 }
+function _sanitizeHTML(html) {
+  // Strip dangerous tags/attributes, keep safe formatting
+  if (!html) return "";
+  var div = document.createElement("div");
+  div.innerHTML = html;
+  // Remove script/style/iframe/object/embed
+  div.querySelectorAll("script,style,iframe,object,embed,form,input,textarea,button,select,link,meta").forEach(function(el) { el.remove(); });
+  // Remove event handlers from all elements
+  div.querySelectorAll("*").forEach(function(el) {
+    for (var i = el.attributes.length - 1; i >= 0; i--) {
+      var attr = el.attributes[i];
+      if (attr.name.startsWith("on") || (attr.name === "href" && attr.value.startsWith("javascript:"))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return div.innerHTML;
+}
+
 function _fmtBytes(n) { if (!n) return "\u2014"; const u = ["B","KB","MB","GB","TB"]; let i = 0; let s = n; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
 function _fmtNum(n) { if (n == null) return "?"; if (n < 1e3) return String(n); if (n < 1e6) return (n/1e3).toFixed(n<1e4?1:0)+"K"; if (n < 1e9) return (n/1e6).toFixed(n<1e7?1:0)+"M"; return (n/1e9).toFixed(1)+"B"; }
 function _thumbUrl(url, w) {
@@ -794,7 +814,7 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
   // ---- Description pane (collapsible) ----
   var desc = el("div", { class: "cvt-desc" });
   var descText = model.description || "";
-  desc.innerHTML = descText || "<i>(no description)</i>";
+    desc.innerHTML = descText ? _sanitizeHTML(descText) : "<i>(no description)</i>";
   right.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
   right.appendChild(desc);
 
@@ -927,7 +947,7 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     }).catch(function(e) {
       statusLine.innerHTML = "";
       statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
-      _toast("Download error: " + e.message, "error", 5000);
+      _toast("Download error: " + e.message, "error");
     }).then(function() { btn.disabled = false; });
   }
 
@@ -1113,7 +1133,7 @@ function openLocalDetail(m, grid, filterIn) {
           if (fullDesc && fullDesc !== m.description) {
             rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
             var descEl = el("div", { class: "cvt-desc" });
-            descEl.textContent = fullDesc;
+            descEl.innerHTML = _sanitizeHTML(fullDesc);
             rightContent.appendChild(descEl);
           }
         }
@@ -1142,7 +1162,7 @@ function openLocalDetail(m, grid, filterIn) {
   if (m.description) {
     rightContent.appendChild(el("label", { style: { marginTop:"6px" } }, "About"));
     var desc = el("div", { class: "cvt-desc" });
-    desc.textContent = m.description;
+    desc.innerHTML = _sanitizeHTML(m.description) || m.description;
     rightContent.appendChild(desc);
   }
 
@@ -1276,12 +1296,13 @@ function openLightbox(img, model) {
   content.appendChild(panel);
   bg.appendChild(content);
   S.lightbox = bg;
+  document.body.style.overflow = "hidden";
   document.body.appendChild(bg);
 
   // Close with fade animation
   function _closeLB() {
     bg.style.opacity = "0";
-    setTimeout(function() { if (bg.parentNode) bg.remove(); }, 200);
+    setTimeout(function() { if (bg.parentNode) bg.remove(); document.body.style.overflow = ""; }, 200);
   }
   bg.onclick = function(e) { if (e.target === bg) _closeLB(); };
   // Override closeLightbox to use fade
@@ -1532,7 +1553,7 @@ function _hfDetail(repoIdOrData) {
       }).catch(function(e) {
         statusLine.innerHTML = "";
         statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
-        _toast("HF error: " + e.message, "error", 5000);
+        _toast("HF error: " + e.message, "error");
       }).then(function() { btn.disabled = false; });
     }
 

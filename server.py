@@ -338,6 +338,7 @@ async def start_download(request):
         loop = asyncio.get_event_loop()
 
         # Resolve "auto" folder — fetch version info to determine type (async)
+        loop = asyncio.get_event_loop()
         if not model_type or model_type == "auto":
             try:
                 if model_version_id:
@@ -526,8 +527,8 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
 
 def _write_json(path, data):
     import json
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def _download_file(url, path):
@@ -540,6 +541,13 @@ def _download_file(url, path):
 
 @routes.get("/civitai/downloads")
 async def list_downloads(request):
+    # Clean up completed/errored tasks older than 30 minutes
+    now = time.time()
+    stale = [k for k, v in DOWNLOAD_TASKS.items()
+             if v.get("status") in ("completed", "error", "cancelled")
+             and now - v.get("started_at", now) > 1800]
+    for k in stale:
+        del DOWNLOAD_TASKS[k]
     items = list(DOWNLOAD_TASKS.values())
     return web.json_response({"items": items})
 
@@ -559,7 +567,9 @@ async def cancel_download(request):
 
 # ── Local Models ──────────────────────────────────────────────────────
 
+import threading
 _local_models_cache = {"data": None, "time": 0}
+_local_cache_lock = threading.Lock()
 _LOCAL_CACHE_TTL = 30  # seconds
 
 @routes.get("/civitai/local-models")
@@ -567,13 +577,16 @@ async def local_models(request):
     try:
         force = request.query.get("force_refresh", "false").lower() == "true"
         now = time.time()
-        if not force and _local_models_cache["data"] is not None and (now - _local_models_cache["time"]) < _LOCAL_CACHE_TTL:
-            models = _local_models_cache["data"]
-            return web.json_response({"models": models, "total": len(models)})
+        if not force:
+            with _local_cache_lock:
+                if _local_models_cache["data"] is not None and (now - _local_models_cache["time"]) < _LOCAL_CACHE_TTL:
+                    models = _local_models_cache["data"]
+                    return web.json_response({"models": models, "total": len(models)})
         loop = asyncio.get_event_loop()
         models = await loop.run_in_executor(None, utils.scan_local_models_direct)
-        _local_models_cache["data"] = models
-        _local_models_cache["time"] = now
+        with _local_cache_lock:
+            _local_models_cache["data"] = models
+            _local_models_cache["time"] = now
         # Fire background DB sync if force_refresh so next load has hashes
         if force:
             asyncio.ensure_future(_bg_local_sync())
