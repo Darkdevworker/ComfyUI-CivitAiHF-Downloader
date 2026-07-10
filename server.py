@@ -959,6 +959,7 @@ async def get_settings(request):
         "compact_grid": utils.db_manager.get_setting("compact_grid", False),
         "has_api_key": bool(utils.db_manager.get_setting("civitai_api_key")),
         "has_token": bool(utils.db_manager.get_setting("hf_token")),
+        "verify_sha256": utils.db_manager.get_setting("compute_sha", True),
     })
 
 
@@ -1186,6 +1187,30 @@ async def hf_download(request):
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "completed"
                     DOWNLOAD_TASKS[task_id]["progress"] = 100
+                # Compute hash after HF download
+                loop = asyncio.get_event_loop()
+                file_hash = ""
+                try:
+                    file_hash = await loop.run_in_executor(
+                        None, utils.CivitaiAPIUtils.calculate_sha256, dest
+                    )
+                    if task_id in DOWNLOAD_TASKS:
+                        DOWNLOAD_TASKS[task_id]["hash"] = file_hash
+                except Exception:
+                    pass
+                # Save metadata with hash
+                try:
+                    vi = await loop.run_in_executor(
+                        None, utils.CivitaiAPIUtils.get_model_version_info_by_hash, file_hash
+                    ) if file_hash else None
+                    if vi:
+                        meta_path = os.path.splitext(dest)[0] + ".civitai.json"
+                        if "hashes" not in vi:
+                            vi["hashes"] = {}
+                        vi["hashes"]["SHA256"] = file_hash
+                        await loop.run_in_executor(None, _write_json, meta_path, vi)
+                except Exception:
+                    pass
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
@@ -1310,15 +1335,13 @@ async def get_local_metadata(request):
 def _load_sidecar(path):
     """Load .civitai.json sidecar for a model file."""
     base = os.path.splitext(path)[0]
-    for ext in [""] + ["." + e for e in ["safetensors","ckpt","pt","pth","bin","gguf"]]:
-        json_path = base + ".civitai.json"
-        if os.path.isfile(json_path):
-            try:
-                with open(json_path) as f:
-                    return json.load(f)
-            except Exception:
-                pass
-            break
+    json_path = base + ".civitai.json"
+    if os.path.isfile(json_path):
+        try:
+            with open(json_path) as f:
+                return json.load(f)
+        except Exception:
+            pass
     return {}
 
 

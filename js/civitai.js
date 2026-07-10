@@ -386,6 +386,7 @@ function buildUI() {
     S.settings.savePrev = cfg.save_preview !== false;
     S.settings.verifySha = cfg.verify_sha256 !== false;
     S.settings.nsfwBlur = cfg.nsfw_blur !== false;
+    window.__nsfwBlurEnabled = S.settings.nsfwBlur;
   }).catch(function(){});
 
   return root;
@@ -416,7 +417,7 @@ function _switchTab(id, tabBar, panes) {
 
 function closeLightbox() { if (S._closeLB) { S._closeLB(); S._closeLB = null; } else if (S.lightbox) { S.lightbox.remove(); S.lightbox = null; } }
 function closeModal() { if (S.modal) { S.modal.remove(); S.modal = null; } }
-document.addEventListener("keydown", function(e) { if (e.key === "Escape") { closeModal(); closeLightbox(); } });
+document.addEventListener("keydown", function(e) { if (e.key === "Escape") { closeModal(); closeLightbox(); var kbOv = document.querySelector(".cvt-kb-overlay"); if (kbOv) kbOv.remove(); } });
 
 // ── 1. BROWSE ────────────────────────────────────────────────────────
 function renderBrowse(pane) {
@@ -1606,7 +1607,7 @@ function _pollDl() {
 
     // Adaptive heartbeat: stop polling if no active jobs or tab hidden
     _activeJobs = S.downloads.filter(function(j) { return j.status === "running" || j.status === "queued" || j.status === "downloading"; }).length;
-    _dlCountEl.textContent = S.downloads.length + " job(s)";
+    if (_dlCountEl) _dlCountEl.textContent = S.downloads.length + " job(s)";
 
     // Diff rendering: only replace list content
     _dlListEl.innerHTML = "";
@@ -1629,6 +1630,9 @@ function _pollDl() {
 }
 
 function _ensureDlPolling() {
+  if (!_dlListEl || !document.body.contains(_dlListEl)) return;
+  if (!_dlTimer) { _pollDl(); }
+}
   if (!_dlListEl) return;
   if (!_dlTimer) { _pollDl(); }
 }
@@ -1681,7 +1685,7 @@ function _jobRow(j) {
 
 // Adaptive heartbeat: pause when tab hidden
 document.addEventListener("visibilitychange", function() {
-  if (!document.hidden && _activeJobs > 0 && !_dlTimer) {
+  if (!document.hidden && _dlListEl && _activeJobs > 0 && !_dlTimer) {
     _pollDl();
   }
 });
