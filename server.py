@@ -387,48 +387,58 @@ async def start_download(request):
             "started_at": time.time(),
         }
 
+        def _download_blocking():
+            nonlocal filename, save_path
+            req = urllib.request.Request(
+                download_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                # Try to get real filename from Content-Disposition
+                cd = resp.headers.get("Content-Disposition", "")
+                if cd:
+                    m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\n]+)', cd)
+                    if m:
+                        real_name = urllib.parse.unquote(m.group(1))
+                        if real_name and real_name != filename:
+                            filename = real_name
+                            save_path = os.path.join(save_dir, filename)
+                            if task_id in DOWNLOAD_TASKS:
+                                DOWNLOAD_TASKS[task_id].update({"filename": filename, "path": save_path})
+                downloaded = 0
+                start_t = time.time()
+                with open(save_path, "wb") as f:
+                    while True:
+                        if DOWNLOAD_TASKS.get(task_id, {}).get("cancelled"):
+                            DOWNLOAD_TASKS[task_id]["status"] = "cancelled"
+                            f.close()
+                            if os.path.exists(save_path):
+                                os.remove(save_path)
+                            return True
+                        chunk = resp.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        elapsed = time.time() - start_t
+                        speed = downloaded / elapsed if elapsed > 0 else 0
+                        progress = int(downloaded / total * 100) if total > 0 else 0
+                        if task_id in DOWNLOAD_TASKS:
+                            DOWNLOAD_TASKS[task_id].update({
+                                "progress": progress, "speed": speed,
+                                "downloaded": downloaded, "total": total,
+                            })
+            return False
+
         async def _download():
             nonlocal filename, save_path
             try:
-                req = urllib.request.Request(
-                    download_url,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                with urllib.request.urlopen(req, timeout=300) as resp:
-                    total = int(resp.headers.get("Content-Length", 0))
-                    # Try to get real filename from Content-Disposition
-                    cd = resp.headers.get("Content-Disposition", "")
-                    if cd:
-                        m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\n]+)', cd)
-                        if m:
-                            real_name = urllib.parse.unquote(m.group(1))
-                            if real_name and real_name != filename:
-                                filename = real_name
-                                save_path = os.path.join(save_dir, filename)
-                                if task_id in DOWNLOAD_TASKS:
-                                    DOWNLOAD_TASKS[task_id].update({"filename": filename, "path": save_path})
-                    downloaded = 0
-                    start_t = time.time()
-                    with open(save_path, "wb") as f:
-                        while True:
-                            if DOWNLOAD_TASKS.get(task_id, {}).get("cancelled"):
-                                DOWNLOAD_TASKS[task_id]["status"] = "cancelled"
-                                if os.path.exists(save_path):
-                                    os.remove(save_path)
-                                return
-                            chunk = resp.read(8192)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            elapsed = time.time() - start_t
-                            speed = downloaded / elapsed if elapsed > 0 else 0
-                            progress = int(downloaded / total * 100) if total > 0 else 0
-                            if task_id in DOWNLOAD_TASKS:
-                                DOWNLOAD_TASKS[task_id].update({
-                                    "progress": progress, "speed": speed,
-                                    "downloaded": downloaded, "total": total,
-                                })
+                # Run blocking network + disk I/O in a thread so the event loop
+                # stays responsive (progress polling, other requests, etc.)
+                cancelled = await loop.run_in_executor(None, _download_blocking)
+                if cancelled:
+                    return
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "completed"
                     DOWNLOAD_TASKS[task_id]["progress"] = 100
@@ -522,6 +532,8 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
             img_url = img.get("url", "") if isinstance(img, dict) else ""
             if not img_url:
                 continue
+            # Saved previews are kept at full resolution
+            img_url = _full_res_url(img_url)
             # Number images starting from 1; first image keeps base name for compatibility
             if idx == 0:
                 img_path = base + ".png"
@@ -541,6 +553,26 @@ def _write_json(path, data):
     import json
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _full_res_url(url):
+    """Force a Civitai CDN image URL to full/original resolution.
+
+    Preview images saved alongside a downloaded model are kept at full
+    resolution (the in-UI browser uses low-res thumbnails separately).
+    """
+    if not url or "image.civitai.com" not in url:
+        return url
+    # Replace an existing width=NNN[,params] transform segment with original=true
+    new = re.sub(r"/width=\d+(?:,[^/]*)?(?=/)", "/original=true", url)
+    if new != url:
+        return new
+    # Already original=true (optionally with params) -> leave as-is
+    if re.search(r"/original=true(?:,[^/]*)?(?=/)", url):
+        return url
+    # No transform segment -> insert original=true before the filename
+    return re.sub(r"/([^/]+\.(?:jpe?g|png|webp|gif|avif))(\?|$)",
+                  r"/original=true/\1\2", url, flags=re.IGNORECASE)
 
 
 def _download_file(url, path):
@@ -978,6 +1010,8 @@ async def get_settings(request):
         "baseUrl": f"https://{utils._get_active_domain()}",
         "saveMetadata": utils.db_manager.get_setting("save_metadata", True),
         "savePreview": utils.db_manager.get_setting("save_preview", True),
+        "save_metadata": utils.db_manager.get_setting("save_metadata", True),
+        "save_preview": utils.db_manager.get_setting("save_preview", True),
         "computeSHA": utils.db_manager.get_setting("compute_sha", True),
         "nsfw_default": utils.db_manager.get_setting("nsfw_default", ""),
         "civitaiToken": bool(utils.db_manager.get_setting("civitai_api_key")),
@@ -1188,38 +1222,47 @@ async def hf_download(request):
             "path": dest, "cancelled": False, "started_at": time.time(),
         }
 
+        def _hf_dl_blocking():
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                start_t = time.time()
+                with open(dest, "wb") as f:
+                    while True:
+                        if DOWNLOAD_TASKS.get(task_id, {}).get("cancelled"):
+                            DOWNLOAD_TASKS[task_id]["status"] = "cancelled"
+                            f.close()
+                            if os.path.exists(dest):
+                                os.remove(dest)
+                            return True
+                        chunk = resp.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        elapsed = time.time() - start_t
+                        speed = downloaded / elapsed if elapsed > 0 else 0
+                        progress = int(downloaded / total * 100) if total > 0 else 0
+                        if task_id in DOWNLOAD_TASKS:
+                            DOWNLOAD_TASKS[task_id].update({
+                                "progress": progress, "speed": speed,
+                                "downloaded": downloaded, "total": total,
+                            })
+            return False
+
         async def _hf_dl():
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=600) as resp:
-                    total = int(resp.headers.get("Content-Length", 0))
-                    downloaded = 0
-                    start_t = time.time()
-                    with open(dest, "wb") as f:
-                        while True:
-                            if DOWNLOAD_TASKS.get(task_id, {}).get("cancelled"):
-                                DOWNLOAD_TASKS[task_id]["status"] = "cancelled"
-                                if os.path.exists(dest):
-                                    os.remove(dest)
-                                return
-                            chunk = resp.read(8192)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            elapsed = time.time() - start_t
-                            speed = downloaded / elapsed if elapsed > 0 else 0
-                            progress = int(downloaded / total * 100) if total > 0 else 0
-                            if task_id in DOWNLOAD_TASKS:
-                                DOWNLOAD_TASKS[task_id].update({
-                                    "progress": progress, "speed": speed,
-                                    "downloaded": downloaded, "total": total,
-                                })
+                loop = asyncio.get_event_loop()
+                # Run blocking network + disk I/O in a thread so the event loop
+                # stays responsive (progress polling, other requests, etc.)
+                cancelled = await loop.run_in_executor(None, _hf_dl_blocking)
+                if cancelled:
+                    return
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "completed"
                     DOWNLOAD_TASKS[task_id]["progress"] = 100
                 # Compute hash after HF download
-                loop = asyncio.get_event_loop()
                 file_hash = ""
                 try:
                     file_hash = await loop.run_in_executor(

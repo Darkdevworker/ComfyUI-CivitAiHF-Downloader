@@ -144,6 +144,7 @@ var _cache = new (function() {
   this.get = function(k) { var e = this._map.get(k); if (!e) return null; if (e.exp < Date.now()) { this._map.delete(k); return null; } this._map.delete(k); this._map.set(k, e); return e.v; };
   this.set = function(k, v) { this._map.set(k, { v: v, exp: Date.now() + this._ttl }); if (this._map.size > this._max) { var ok = this._map.keys().next().value; this._map.delete(ok); } };
   this.clear = function() { this._map.clear(); this._inflight.clear(); };
+  this.del = function(k) { this._map.delete(k); this._inflight.delete(k); };
 })();
 
 var _activeJobs = 0;
@@ -189,15 +190,28 @@ function _api(path, opts) {
 
 function _fmtBytes(n) { if (!n) return "\u2014"; const u = ["B","KB","MB","GB","TB"]; let i = 0; let s = n; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
 function _fmtNum(n) { if (n == null) return "?"; if (n < 1e3) return String(n); if (n < 1e6) return (n/1e3).toFixed(n<1e4?1:0)+"K"; if (n < 1e9) return (n/1e6).toFixed(n<1e7?1:0)+"M"; return (n/1e9).toFixed(1)+"B"; }
+var _THUMB_QUALITY = 60;
 function _thumbUrl(url, w) {
   if (!url) return url;
   w = w || 450;
-  // Civitai CDN uses path-based width: /width=NNN/ or /...,width=NNN/ -> /width=WWW/
+  var t = "width=" + w + ",quality=" + _THUMB_QUALITY;
+  // Civitai CDN uses a path transform segment between the UUID and the filename,
+  // e.g. /original=true/ , /width=NNN/ , or /width=NNN,quality=90/ .
+  // A smaller width + lower quality dramatically reduces payload (originals are multi-MB).
   if (url.indexOf("image.civitai.com") >= 0) {
-    return url.replace(/(\/|\b)width=\d+(\/|,)/, "$1width=" + w + "$2");
+    // Already a width= transform (with optional extra params) -> replace it
+    if (/\/width=\d+(?:,[^/]*)?(?=\/)/.test(url)) {
+      return url.replace(/\/width=\d+(?:,[^/]*)?(?=\/)/, "/" + t);
+    }
+    // original=true (optionally with extra params) -> replace with width+quality
+    if (/\/original=true(?:,[^/]*)?(?=\/)/.test(url)) {
+      return url.replace(/\/original=true(?:,[^/]*)?(?=\/)/, "/" + t);
+    }
+    // No transform segment -> insert before the filename
+    return url.replace(/\/([^/]+\.(?:jpe?g|png|webp|gif|avif))(\?|$)/i, "/" + t + "/$1$2");
   }
   var sep = url.indexOf("?") >= 0 ? "&" : "?";
-  return url + sep + "width=" + w;
+  return url + sep + "width=" + w + "&quality=" + _THUMB_QUALITY;
 }
 
 function _flashHint(sb, text) {
@@ -289,7 +303,10 @@ function buildUI() {
     if (e.key === "/" && !isInput) {
       e.preventDefault();
       var activePane = root.querySelector(".cvt-pane.active");
-      if (activePane) { var search = activePane.querySelector("input[type='text']"); if (search) search.focus(); }
+      if (activePane) {
+        var search = activePane.querySelector("#cvt-q, #cvt-hf-q") || activePane.querySelector("input[type='text']");
+        if (search) search.focus();
+      }
       return;
     }
     // "?" to show shortcuts help
@@ -301,8 +318,8 @@ function buildUI() {
       if (tabs[idx]) { e.preventDefault(); tabs[idx].click(); }
       return;
     }
-    // "c" for compact toggle
-    if (e.key === "c" && !isInput && (e.ctrlKey || e.metaKey)) {
+    // Alt+C for compact toggle
+    if (e.code === "KeyC" && !isInput && e.altKey) {
       e.preventDefault();
       root.classList.toggle("compact");
       var isCompact = root.classList.contains("compact");
@@ -313,9 +330,21 @@ function buildUI() {
   });
 
   // Card keyboard navigation (delegate)
+  var _NAV_KEYS = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"];
   root.addEventListener("keydown", function(e) {
     var card = e.target.closest ? e.target.closest(".cvt-card") : null;
-    if (!card) return;
+    if (!card) {
+      // No card focused yet: an arrow key focuses the first card in the active grid,
+      // unless the user is typing in a form field.
+      if (_NAV_KEYS.indexOf(e.key) < 0) return;
+      var tag = (e.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      var activePane = root.querySelector(".cvt-pane.active");
+      var firstGrid = activePane && activePane.querySelector(".cvt-grid");
+      var firstCard = firstGrid && firstGrid.querySelector(".cvt-card");
+      if (firstCard) { e.preventDefault(); firstCard.setAttribute("tabindex", "0"); firstCard.focus(); }
+      return;
+    }
     var grid = card.parentElement;
     if (!grid || !grid.classList.contains("cvt-grid")) return;
     var cards = Array.from(grid.querySelectorAll(".cvt-card"));
@@ -356,7 +385,7 @@ function buildUI() {
       [["Enter"], "Open model detail"],
       [["Esc"], "Close modal / lightbox"],
       [["1","2","3","4","5"], "Switch tabs"],
-      [["Ctrl","C"], "Toggle compact grid"],
+      [["Alt","C"], "Toggle compact grid"],
       [["?"], "Show this help"],
     ];
     shortcuts.forEach(function(s) {
@@ -407,6 +436,9 @@ function _switchTab(id, tabBar, panes) {
     else if (id === "downloads") renderDownloads(pane);
     else if (id === "local") renderLocal(pane);
     else if (id === "settings") renderSettings(pane);
+  } else if (id === "downloads") {
+    // Always refresh (and restart auto-refresh) when re-opening Downloads
+    _pollDl();
   }
 }
 
@@ -451,7 +483,7 @@ function renderBrowse(pane) {
   sb.appendChild(row2);
   sb.appendChild(baseDl);
   // ---- NSFW rating row below ----
-  var ratingRow = _buildRatingCheckboxes(S.civitai.nsfw || "", function() { S.civitai.nsfw = ratingRow._getVal(); _resetAndSearch(); });
+  var ratingRow = _buildRatingCheckboxes(S.civitai.nsfw || "", function() { S.civitai.nsfw = ratingRow._getVal(); });
   sb.appendChild(el("div", { class: "cvt-row", style: { marginTop:"4px" } }, ratingRow));
   pane.appendChild(sb);
 
@@ -824,6 +856,20 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     });
     gallery.appendChild(gFrag);
 
+    // Enrich images with generation params (meta) — the compact /models response
+    // omits meta, so pull it from the version-detail endpoint and match by URL.
+    var needsMeta = (v.images || []).some(function(im) { return im && !im.meta; });
+    if (needsMeta && v.id && !v._metaEnriched) {
+      v._metaEnriched = true;
+      _api("/civitai/model-version-detail?id=" + encodeURIComponent(v.id)).then(function(vd) {
+        var metaByUrl = {};
+        (vd && vd.images || []).forEach(function(vi) { if (vi && vi.url) metaByUrl[vi.url] = vi.meta || null; });
+        (v.images || []).forEach(function(im) {
+          if (im && !im.meta && metaByUrl[im.url]) im.meta = metaByUrl[im.url];
+        });
+      }).catch(function() { v._metaEnriched = false; });
+    }
+
     // Files dropdown
     fSel.innerHTML = "";
     var vfiles = v.files || [];
@@ -1162,6 +1208,30 @@ function openLocalDetail(m, grid, filterIn) {
   };
   actions.appendChild(delBtn);
   rightContent.appendChild(actions);
+}
+
+function _sanitizeHTML(html) {
+  if (!html) return "";
+  var doc = new DOMParser().parseFromString(String(html), "text/html");
+  // Strip dangerous elements outright
+  doc.querySelectorAll("script,style,iframe,object,embed,link,meta,form,input,button").forEach(function(n) { n.remove(); });
+  // Strip event handlers and javascript: URLs; force links to open safely
+  doc.querySelectorAll("*").forEach(function(n) {
+    for (var i = n.attributes.length - 1; i >= 0; i--) {
+      var attr = n.attributes[i];
+      var name = attr.name.toLowerCase();
+      var val = (attr.value || "").trim();
+      if (name.indexOf("on") === 0) { n.removeAttribute(attr.name); continue; }
+      if ((name === "href" || name === "src" || name === "xlink:href") && /^\s*javascript:/i.test(val)) {
+        n.removeAttribute(attr.name);
+      }
+    }
+    if (n.tagName === "A") {
+      n.setAttribute("target", "_blank");
+      n.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+  return doc.body.innerHTML;
 }
 
 function _sanitizeModelName(name, maxLen) {
@@ -1574,9 +1644,11 @@ var _dlTimer = null;
 var _dlListEl = null;
 var _dlHeader = null;
 var _dlCountEl = null;
+var _dlRows = {};
 
 function renderDownloads(pane) {
   _dlListEl = null;
+  _dlRows = {};
 
   // Header (static)
   _dlHeader = el("div", { class: "cvt-row", style: { marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
@@ -1606,14 +1678,39 @@ function _pollDl() {
     _activeJobs = S.downloads.filter(function(j) { return j.status === "running" || j.status === "queued" || j.status === "downloading"; }).length;
     if (_dlCountEl) _dlCountEl.textContent = S.downloads.length + " job(s)";
 
-    // Diff rendering: only replace list content
-    _dlListEl.innerHTML = "";
+    // True diff rendering: update rows in place, only add/remove when jobs change
     if (!S.downloads.length) {
+      _dlRows = {};
+      _dlListEl.innerHTML = "";
       _dlListEl.appendChild(el("div", { class: "cvt-empty" }, "No downloads yet."));
     } else {
-      var frag = document.createDocumentFragment();
-      S.downloads.forEach(function(j) { frag.appendChild(_jobRow(j)); });
-      _dlListEl.appendChild(frag);
+      // Remove the empty placeholder if present
+      var empty = _dlListEl.querySelector(".cvt-empty");
+      if (empty) empty.remove();
+
+      var seen = {};
+      S.downloads.forEach(function(j, idx) {
+        var key = String(j.id);
+        seen[key] = true;
+        var entry = _dlRows[key];
+        if (!entry) {
+          entry = _jobRow(j);
+          _dlRows[key] = entry;
+        } else {
+          entry.update(j);
+        }
+        // Keep DOM order in sync with data order without tearing down
+        var expected = _dlListEl.children[idx];
+        if (expected !== entry.row) _dlListEl.insertBefore(entry.row, expected || null);
+      });
+
+      // Remove rows for jobs that no longer exist
+      Object.keys(_dlRows).forEach(function(key) {
+        if (!seen[key]) {
+          if (_dlRows[key].row.parentNode) _dlRows[key].row.remove();
+          delete _dlRows[key];
+        }
+      });
     }
 
     // Adaptive heartbeat: only poll when visible and active
@@ -1630,8 +1727,16 @@ function _ensureDlPolling() {
   if (!_dlListEl || !document.body.contains(_dlListEl)) return;
   if (!_dlTimer) { _pollDl(); }
 }
-  if (!_dlListEl) return;
-  if (!_dlTimer) { _pollDl(); }
+
+function _jobIsActive(status) {
+  return status === "running" || status === "queued" || status === "downloading";
+}
+
+function _jobSubText(j, pct) {
+  var subText = pct + "% \u00B7 " + _fmtBytes(j.downloaded || 0) + " / " + _fmtBytes(j.total || 0);
+  if (j.speed_bps || j.speed) subText += " \u00B7 " + _fmtBytes(j.speed_bps || j.speed) + "/s";
+  if (j.error) subText += " \u00B7 " + j.error;
+  return subText;
 }
 
 function _jobRow(j) {
@@ -1644,40 +1749,82 @@ function _jobRow(j) {
     ? el("span", { class: "cvt-badge", style: { background:"#3a4a6a" } }, "\uD83E\uDD17 HF")
     : el("span", { class: "cvt-badge", style: { background:"#5a2a2a" } }, "Civitai");
 
-  top.appendChild(el("div", { class: "name" },
-    el("span", { class: "cvt-status-dot " + (j.status || "") }),
+  var statusDot = el("span", { class: "cvt-status-dot " + (j.status || "") });
+  var nameEl = el("div", { class: "name" },
+    statusDot,
     " ", srcBadge, " ",
     j.filename || j.name || (j.source === "hf"
       ? (j.hf_repo_id || "") + ":" + (j.hf_path || "")
-      : "version " + (j.model_version_id || ""))));
+      : "version " + (j.model_version_id || "")));
+  top.appendChild(nameEl);
 
   // Cancel button
-  if (j.status === "running" || j.status === "queued" || j.status === "downloading") {
+  function makeCancelBtn() {
     var cnl = el("button", { class: "cvt-btn ghost", style: { padding:"2px 6px", fontSize:"11px" } }, "\u2715");
     cnl.onclick = function() {
       _api("/civitai/download-cancel", { method:"POST", body:JSON.stringify({task_id:j.id}) }).then(function() { _pollDl(); });
     };
-    top.appendChild(cnl);
+    return cnl;
   }
+  var cancelBtn = _jobIsActive(j.status) ? makeCancelBtn() : null;
+  if (cancelBtn) top.appendChild(cancelBtn);
   row.appendChild(top);
 
   // Sub info
-  var subText = pct + "% \u00B7 " + _fmtBytes(j.downloaded || 0) + " / " + _fmtBytes(j.total || 0);
-  if (j.speed_bps || j.speed) subText += " \u00B7 " + _fmtBytes(j.speed_bps || j.speed) + "/s";
-  if (j.error) subText += " \u00B7 " + j.error;
-  row.appendChild(el("div", { class: "sub" }, subText));
+  var subEl = el("div", { class: "sub" }, _jobSubText(j, pct));
+  row.appendChild(subEl);
 
   // Progress bar
   var bar = el("div", { class: "bar" });
-  bar.appendChild(el("div", { style: { width: pct + "%" } }));
+  var barInner = el("div", { style: { width: pct + "%" } });
+  bar.appendChild(barInner);
   row.appendChild(bar);
 
   // Filepath on success
+  var pathEl = null;
   if (j.filepath && j.status === "done") {
-    row.appendChild(el("div", { class: "sub", style: { marginTop:"4px", color:"#9c9" } }, "Saved to " + j.filepath));
+    pathEl = el("div", { class: "sub", style: { marginTop:"4px", color:"#9c9" } }, "Saved to " + j.filepath);
+    row.appendChild(pathEl);
   }
 
-  return row;
+  function update(nj) {
+    var npct = nj.progress != null ? Math.round(nj.progress) : 0;
+    var status = nj.status || "";
+
+    if (row.className !== "cvt-job " + status) row.className = "cvt-job " + status;
+    if (statusDot.className !== "cvt-status-dot " + status) statusDot.className = "cvt-status-dot " + status;
+
+    var newSub = _jobSubText(nj, npct);
+    if (subEl.textContent !== newSub) subEl.textContent = newSub;
+
+    var newWidth = npct + "%";
+    if (barInner.style.width !== newWidth) barInner.style.width = newWidth;
+
+    // Cancel button appears/disappears with active state
+    var active = _jobIsActive(status);
+    if (active && !cancelBtn) {
+      cancelBtn = makeCancelBtn();
+      top.appendChild(cancelBtn);
+    } else if (!active && cancelBtn) {
+      if (cancelBtn.parentNode) cancelBtn.remove();
+      cancelBtn = null;
+    }
+
+    // Saved-to path appears on completion
+    var wantPath = nj.filepath && status === "done";
+    if (wantPath && !pathEl) {
+      pathEl = el("div", { class: "sub", style: { marginTop:"4px", color:"#9c9" } }, "Saved to " + nj.filepath);
+      row.appendChild(pathEl);
+    } else if (wantPath && pathEl) {
+      var txt = "Saved to " + nj.filepath;
+      if (pathEl.textContent !== txt) pathEl.textContent = txt;
+    } else if (!wantPath && pathEl) {
+      if (pathEl.parentNode) pathEl.remove();
+      pathEl = null;
+    }
+  }
+
+  return { row: row, update: update };
 }
 
 // Adaptive heartbeat: pause when tab hidden
@@ -1863,7 +2010,7 @@ function renderSettings(pane) {
 
   var apiGroup = el("div", { class: "group" });
   var apiHeader = el("div", { class: "cvt-settings-row" });
-  apiHeader.appendChild(el("span", { class: "cvt-settings-label" }, "\uD83C\uDDE8\uD83C\uDDF3 Civitai API Key"));
+  apiHeader.appendChild(el("span", { class: "cvt-settings-label" }, "Civitai API Key"));
   var apiBadge = el("span", { class: "cvt-settings-badge" }, "not set");
   apiHeader.appendChild(apiBadge);
   apiGroup.appendChild(apiHeader);
@@ -1934,7 +2081,8 @@ function renderSettings(pane) {
   [["\uD83C\uDFF7 Auto-Tag","Tag all models with Civitai metadata",function(){_api("/civitai/auto-tag",{method:"POST",body:"{}"}).then(function(){_toast("Auto-tag complete")}).catch(function(e){_toast("Error: "+e.message,"error")})}],
    ["\uD83E\uDDF9 Cleanup","Find orphan files and invalid metadata",function(){_api("/civitai/cleanup-scan",{method:"POST"}).then(function(r){_toast("Found "+(r.issues||[]).length+" issues")}).catch(function(e){_toast("Error: "+e.message,"error")})}],
    ["\uD83D\uDCC2 Organize","Auto-sort models into subfolders",function(){_api("/civitai/auto-organize",{method:"POST"}).then(function(r){_toast("Organized "+(r.moved||0)+" files");renderLocal(pane,true)}).catch(function(e){_toast("Error: "+e.message,"error")})}],
-   ["\uD83D\uDD0D Rescan","Force re-scan all model folders",function(){_api("/civitai/rescan",{method:"POST",body:JSON.stringify({force:true})}).then(function(){_toast("Rescanned")}).catch(function(e){_toast("Error: "+e.message,"error")})}]].forEach(function(a){
+    ["\uD83D\uDD0D Rescan","Force re-scan all model folders",function(){_api("/civitai/rescan",{method:"POST",body:JSON.stringify({force:true})}).then(function(){_toast("Rescanned")}).catch(function(e){_toast("Error: "+e.message,"error")})}],
+    ["\uD83D\uDD04 Refresh Nodes","Reload all node model dropdowns",function(){try{var r=app.refreshComboInNodes&&app.refreshComboInNodes();Promise.resolve(r).then(function(){_toast("Nodes refreshed","ok")}).catch(function(e){_toast("Error: "+(e&&e.message||e),"error")});}catch(e){_toast("Error: "+e.message,"error")}}]].forEach(function(a){
     var card = el("div",{class:"cvt-settings-action-card",onclick:a[2]});
     card.appendChild(el("div",{class:"cvt-settings-action-title"},a[0]));
     card.appendChild(el("div",{class:"cvt-settings-action-desc"},a[1]));
@@ -1969,13 +2117,13 @@ function renderSettings(pane) {
 
   apiShowBtn.onclick=function(){if(apiIn.type==="password"){apiIn.type="text";apiShowBtn.textContent="\uD83D\uDE48";}else{apiIn.type="password";apiShowBtn.textContent="\uD83D\uDC41";}};
   hfShowBtn.onclick=function(){if(hfIn.type==="password"){hfIn.type="text";hfShowBtn.textContent="\uD83D\uDE48";}else{hfIn.type="password";hfShowBtn.textContent="\uD83D\uDC41";}};
-  apiSaveBtn.onclick=function(){var v=apiIn.value.trim();if(!v){apiStatus.innerHTML="<span style='color:#e88'>Paste a key first.</span>";return;}apiSaveBtn.disabled=true;apiStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_api("/civitai/settings",{method:"POST",body:JSON.stringify({api_key:v})}).then(function(r){apiIn.value="";if(r.has_api_key){apiBadge.className="cvt-settings-badge active";apiBadge.textContent="connected";}apiStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 API key saved</span>":"<span style='color:#cc9'>Key cleared</span>";}).catch(function(e){apiStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){apiSaveBtn.disabled=false;});};
+  apiSaveBtn.onclick=function(){var v=apiIn.value.trim();if(!v){apiStatus.innerHTML="<span style='color:#e88'>Paste a key first.</span>";return;}apiSaveBtn.disabled=true;apiStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_cache.del("/civitai/settings");_api("/civitai/settings",{method:"POST",body:JSON.stringify({api_key:v})}).then(function(r){apiIn.value="";if(r.has_api_key){apiBadge.className="cvt-settings-badge active";apiBadge.textContent="connected";}apiStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 API key saved</span>":"<span style='color:#cc9'>Key cleared</span>";}).catch(function(e){apiStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){apiSaveBtn.disabled=false;});};
   apiClearBtn.onclick=function(){if(!confirm("Remove the saved Civitai API key?"))return;_api("/civitai/settings",{method:"POST",body:JSON.stringify({api_key:""})}).then(function(){apiIn.value="";apiBadge.className="cvt-settings-badge";apiBadge.textContent="not set";apiStatus.innerHTML="<span style='color:#cc9'>Key removed</span>";}).catch(function(e){apiStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";});};
   apiIn.onkeydown=function(e){if(e.key==="Enter")apiSaveBtn.click();};
   hfSaveBtn.onclick=function(){var v=hfIn.value.trim();if(!v){hfStatus.innerHTML="<span style='color:#e88'>Paste a token first.</span>";return;}hfSaveBtn.disabled=true;hfStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:v})}).then(function(r){hfIn.value="";if(r.has_token){hfBadge.className="cvt-settings-badge active";hfBadge.textContent="connected";}hfStatus.innerHTML=r.has_token?"<span style='color:#6d6'>\u2713 Token saved</span>":"<span style='color:#cc9'>Token cleared</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){hfSaveBtn.disabled=false;});};
   hfClearBtn.onclick=function(){if(!confirm("Remove the saved HF token?"))return;_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:""})}).then(function(){hfIn.value="";hfBadge.className="cvt-settings-badge";hfBadge.textContent="not set";hfStatus.innerHTML="<span style='color:#cc9'>Token removed</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";});};
   hfIn.onkeydown=function(e){if(e.key==="Enter")hfSaveBtn.click();};
-  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,compact_grid:cbCompact.checked,theme:S.root.classList.contains("light")?"light":"dark"};S.settings.saveMeta=cbMeta.checked;S.settings.savePrev=cbPrev.checked;S.settings.verifySha=cbHash.checked;S.settings.nsfwBlur=cbNsfwBlur.checked;_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
+  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,compact_grid:cbCompact.checked,theme:S.root.classList.contains("light")?"light":"dark"};S.settings.saveMeta=cbMeta.checked;S.settings.savePrev=cbPrev.checked;S.settings.verifySha=cbHash.checked;S.settings.nsfwBlur=cbNsfwBlur.checked;_cache.del("/civitai/settings");_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
   testBtn.onclick=function(){testBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Testing\u2026</span>";_api("/civitai/ping").then(function(r){sStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 Connected \u2014 API key recognised</span>":"<span style='color:#cc9'>Connected \u2014 no API key (public only)</span>";}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>\u2717 Failed: "+e.message+"</span>";}).then(function(){testBtn.disabled=false;});};
   clearCacheBtn.onclick=function(){clearCacheBtn.disabled=true;_api("/civitai/cache/clear",{method:"POST"}).then(function(r){_cache.clear();_toast("Cache cleared");sStatus.innerHTML="<span style='color:#6d6'>\u2713 Cache cleared</span>";}).catch(function(e){_toast("Clear failed: "+e.message,"error");}).then(function(){clearCacheBtn.disabled=false;});};
 }
