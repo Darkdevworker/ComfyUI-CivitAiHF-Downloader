@@ -1502,6 +1502,20 @@ function renderHF(pane) {
             el("span", {}, "\u2B07 " + _fmtNum(m.downloads || 0)),
             el("span", {}, "\u2764 " + _fmtNum(m.likes || 0)),
             totalSize ? el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes(totalSize)) : null)));
+        var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, "\u2605");
+        bookmarkBtn.onclick = function(e) {
+          e.stopPropagation();
+          var payload = {
+            name: rep || "", model_version_id: 0, model_id: 0,
+            filename: (rep || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
+            source: "hf", repo_id: rep || "", repo_type: "model"
+          };
+          _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
+            if (r.success) _toast("Bookmarked: " + (rep || ""), "ok");
+            else _toast((r.message || "Already bookmarked"), "ok");
+          }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
+        };
+        card.appendChild(bookmarkBtn);
         card.onclick = function() { _hfDetail(rep); };
         grid.appendChild(card);
       });
@@ -1556,6 +1570,20 @@ function _hfDetail(repoIdOrData, repoType) {
   var right = el("div", { class: "right" });
   modal.appendChild(left); modal.appendChild(right);
   left.appendChild(el("h2", { style: { color:"#ff8c42" } }, repoId));
+  var bookmarkBtnDetail = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { marginTop:"6px", background:"rgba(0,0,0,.5)", border:"1px solid #ff8c42", borderRadius:"4px", padding:"4px 8px", color:"#ff8c42", fontSize:"12px", cursor:"pointer", display:"inline-flex", alignItems:"center", gap:"4px" } }, "★ Bookmark");
+  bookmarkBtnDetail.onclick = function(e) {
+    e.stopPropagation();
+    var payload = {
+      name: repoId || "", model_version_id: 0, model_id: 0,
+      filename: (repoId || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
+      source: "hf", repo_id: repoId || "", repo_type: repoType || "model"
+    };
+    _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
+      if (r.success) _toast("Bookmarked: " + (repoId || ""), "ok");
+      else _toast((r.message || "Already bookmarked"), "ok");
+    }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
+  };
+  left.appendChild(bookmarkBtnDetail);
   left.appendChild(el("div", { class: "sub" }, "Loading\u2026"));
 
   _api("/civitai/hf-files?repo_id=" + encodeURIComponent(repoId) + "&repo_type=" + encodeURIComponent(repoType)).then(function(info) {
