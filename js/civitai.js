@@ -1885,9 +1885,9 @@ function _jobRow(j) {
       : "version " + (j.model_version_id || "")));
   top.appendChild(nameEl);
 
-  // Cancel button
+  // Cancel button (shown while the download is active)
   function makeCancelBtn() {
-    var cnl = el("button", { class: "cvt-btn ghost", style: { padding:"2px 6px", fontSize:"11px" } }, "\u2715");
+    var cnl = el("button", { class: "cvt-btn ghost", style: { padding:"2px 6px", fontSize:"11px" }, title:"Cancel this download" }, "Cancel \u2715");
     cnl.onclick = function() {
       _api("/civitai/download-cancel", { method:"POST", body:JSON.stringify({task_id:j.id}) }).then(function() { _pollDl(); });
     };
