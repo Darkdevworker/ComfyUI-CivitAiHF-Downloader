@@ -490,6 +490,16 @@ select option { background: #111; color: #f0f0f0; }
 .cvt-job.done .bar > div { background: rgba(255,255,255,.20); box-shadow: none; }
 .cvt-job.error .bar > div { background: rgba(255,255,255,.10); box-shadow: none; }
 
+/* Download status colors */
+.cvt-job.downloading, .cvt-job.running { border-color: rgba(255,200,50,.45); box-shadow: 0 0 8px rgba(255,200,50,.15); }
+.cvt-job.downloading .name, .cvt-job.running .name { color: #ffe066; }
+.cvt-job.completed, .cvt-job.done { border-color: rgba(120,220,120,.45); box-shadow: 0 0 8px rgba(120,220,120,.15); }
+.cvt-job.completed .bar > div, .cvt-job.done .bar > div { background: linear-gradient(90deg, rgba(120,220,120,.60), rgba(120,220,120,.90)); box-shadow: 0 0 10px rgba(120,220,120,.25); }
+.cvt-job.completed .name, .cvt-job.done .name { color: #9cf; }
+.cvt-job.error { border-color: rgba(255,100,100,.45); box-shadow: 0 0 8px rgba(255,100,100,.15); }
+.cvt-job.error .bar > div { background: linear-gradient(90deg, rgba(255,100,100,.50), rgba(255,120,120,.80)); }
+.cvt-job.error .name { color: #ff9999; }
+
 /* ── Status dots ─────────────────────────────────────────────────── */
 .cvt-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: 0 0 8px; }
 .cvt-status-dot.running { background: #fff; animation: cvt-pulse 1.4s ease-in-out infinite; box-shadow: 0 0 8px rgba(255,255,255,.40); }
