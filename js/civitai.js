@@ -157,7 +157,7 @@ var S = {
   curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModel: "", loading: false,
     cursor: "", cursorStack: [], nextCursor: null, limit: 24 },
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "" },
-  downloads: [], local: { models: [], filter: "" },
+  downloads: [], dlFilter: "all", local: { models: [], filter: "" },
   settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true },
   modal: null, lightbox: null,
   root: null,
@@ -1657,24 +1657,125 @@ var _dlListEl = null;
 var _dlHeader = null;
 var _dlCountEl = null;
 var _dlRows = {};
+var _dlClearBtn = null;
+var _dlChips = {};
+var _dlSummaryEl = null;
+var _dlSummaryText = null;
+var _dlSummaryBar = null;
+var DL_FILTERS = [["all","All"],["active","Active"],["done","Done"],["failed","Failed"]];
 
 function renderDownloads(pane) {
   _dlListEl = null;
   _dlRows = {};
 
   // Header (static)
-  _dlHeader = el("div", { class: "cvt-row", style: { marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
+  _dlHeader = el("div", { style: { marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
+
+  var topRow = el("div", { class: "cvt-row" });
   var refreshBtn = el("button", { class: "cvt-btn ghost" },
     el("span", { class: "emoji-btn emoji-spin-slow" }, "\u21BB"), " Refresh");
   refreshBtn.onclick = _pollDl;
+
+  var clearBtn = el("button", { class: "cvt-btn ghost" },
+    el("span", { class: "emoji-btn" }, "\uD83E\uDDF9"), " Clear completed");
+  clearBtn.onclick = function() {
+    clearBtn.disabled = true;
+    _api("/civitai/downloads-clear", { method:"POST", body:JSON.stringify({}) }).then(function(r) {
+      _toast((r && r.cleared ? r.cleared : 0) + " job(s) cleared", "ok");
+      _pollDl();
+    }).catch(function(e) { _toast("Clear failed: " + e.message, "error"); })
+      .then(function() { clearBtn.disabled = false; });
+  };
+  _dlClearBtn = clearBtn;
+
   _dlCountEl = el("div", { style: { textAlign:"right", fontSize:"11px", color:"var(--civ-text-dim)", flex:"2", alignSelf:"center" } });
-  _dlHeader.appendChild(refreshBtn);
-  _dlHeader.appendChild(_dlCountEl);
+  topRow.appendChild(refreshBtn);
+  topRow.appendChild(clearBtn);
+  topRow.appendChild(_dlCountEl);
+  _dlHeader.appendChild(topRow);
+
+  // Status filter chips
+  var chipRow = el("div", { class: "cvt-chip-row", style: { display:"flex", gap:"6px", marginTop:"8px", flexWrap:"wrap" } });
+  _dlChips = {};
+  DL_FILTERS.forEach(function(f) {
+    var chip = el("button", { class: "cvt-chip" + (S.dlFilter === f[0] ? " active" : "") }, f[1]);
+    chip.onclick = function() {
+      S.dlFilter = f[0];
+      Object.keys(_dlChips).forEach(function(k) {
+        _dlChips[k].classList.toggle("active", k === f[0]);
+      });
+      _dlRows = {};
+      if (_dlListEl) _dlListEl.innerHTML = "";
+      _pollDl();
+    };
+    _dlChips[f[0]] = chip;
+    chipRow.appendChild(chip);
+  });
+  _dlHeader.appendChild(chipRow);
+
+  // Aggregate progress summary
+  _dlSummaryEl = el("div", { class: "cvt-dl-summary", style: { display:"none", marginTop:"8px" } });
+  _dlSummaryText = el("div", { style: { fontSize:"10.5px", color:"var(--civ-text-dim)" } });
+  var sBar = el("div", { class: "bar", style: { width:"100%", height:"5px", background:"rgba(255,255,255,.04)", borderRadius:"3px", overflow:"hidden", marginTop:"5px" } });
+  _dlSummaryBar = el("div", { style: { height:"100%", width:"0%", borderRadius:"3px", background:"linear-gradient(90deg, rgba(255,255,255,.50), rgba(255,255,255,.85))", transition:"width .4s var(--civ-ease-out)" } });
+  sBar.appendChild(_dlSummaryBar);
+  _dlSummaryEl.appendChild(_dlSummaryText);
+  _dlSummaryEl.appendChild(sBar);
+  _dlHeader.appendChild(_dlSummaryEl);
+
   pane.appendChild(_dlHeader);
 
   _dlListEl = el("div");
   pane.appendChild(_dlListEl);
   _pollDl();
+}
+
+function _jobMatchesFilter(j, filter) {
+  var st = j.status || "";
+  if (filter === "all") return true;
+  if (filter === "active") return _jobIsActive(st);
+  if (filter === "done") return st === "done" || st === "completed";
+  if (filter === "failed") return st === "error" || st === "cancelled";
+  return true;
+}
+
+function _updateDlSummary(jobs) {
+  if (!_dlSummaryEl) return;
+  var active = jobs.filter(function(j) { return _jobIsActive(j.status); });
+  if (!active.length) { _dlSummaryEl.style.display = "none"; return; }
+  _dlSummaryEl.style.display = "";
+
+  var totalBytes = 0, doneBytes = 0, speed = 0, haveTotals = true;
+  active.forEach(function(j) {
+    var t = j.total || 0, d = j.downloaded || 0;
+    if (!t) haveTotals = false;
+    totalBytes += t; doneBytes += d;
+    speed += (j.speed_bps || j.speed || 0);
+  });
+
+  var pct = (haveTotals && totalBytes > 0) ? Math.round(doneBytes / totalBytes * 100)
+    : Math.round(active.reduce(function(a, j) { return a + (j.progress || 0); }, 0) / active.length);
+  _dlSummaryBar.style.width = pct + "%";
+
+  var txt = active.length + " active \u00B7 " + pct + "%";
+  if (haveTotals && totalBytes > 0) txt += " \u00B7 " + _fmtBytes(doneBytes) + " / " + _fmtBytes(totalBytes);
+  if (speed > 0) {
+    txt += " \u00B7 " + _fmtBytes(speed) + "/s";
+    if (haveTotals && totalBytes > doneBytes) {
+      var eta = Math.round((totalBytes - doneBytes) / speed);
+      txt += " \u00B7 ETA " + _fmtDuration(eta);
+    }
+  }
+  _dlSummaryText.textContent = txt;
+}
+
+function _fmtDuration(sec) {
+  if (!isFinite(sec) || sec < 0) return "\u2013";
+  if (sec < 60) return sec + "s";
+  var m = Math.floor(sec / 60), s2 = sec % 60;
+  if (m < 60) return m + "m " + s2 + "s";
+  var h = Math.floor(m / 60);
+  return h + "h " + (m % 60) + "m";
 }
 
 function _pollDl() {
@@ -1687,21 +1788,35 @@ function _pollDl() {
     S.downloads = d.items || [];
 
     // Adaptive heartbeat: stop polling if no active jobs or tab hidden
-    _activeJobs = S.downloads.filter(function(j) { return j.status === "running" || j.status === "queued" || j.status === "downloading"; }).length;
-    if (_dlCountEl) _dlCountEl.textContent = S.downloads.length + " job(s)";
+    _activeJobs = S.downloads.filter(function(j) { return _jobIsActive(j.status); }).length;
+
+    var finished = S.downloads.filter(function(j) { return !_jobIsActive(j.status); }).length;
+    if (_dlClearBtn) _dlClearBtn.disabled = finished === 0;
+
+    _updateDlSummary(S.downloads);
+
+    var filter = S.dlFilter || "all";
+    var shown = S.downloads.filter(function(j) { return _jobMatchesFilter(j, filter); });
+
+    if (_dlCountEl) {
+      _dlCountEl.textContent = (filter === "all")
+        ? S.downloads.length + " job(s)"
+        : shown.length + " of " + S.downloads.length + " job(s)";
+    }
 
     // True diff rendering: update rows in place, only add/remove when jobs change
-    if (!S.downloads.length) {
+    if (!shown.length) {
       _dlRows = {};
       _dlListEl.innerHTML = "";
-      _dlListEl.appendChild(el("div", { class: "cvt-empty" }, "No downloads yet."));
+      _dlListEl.appendChild(el("div", { class: "cvt-empty" },
+        S.downloads.length ? "No jobs match this filter." : "No downloads yet."));
     } else {
       // Remove the empty placeholder if present
       var empty = _dlListEl.querySelector(".cvt-empty");
       if (empty) empty.remove();
 
       var seen = {};
-      S.downloads.forEach(function(j, idx) {
+      shown.forEach(function(j, idx) {
         var key = String(j.id);
         seen[key] = true;
         var entry = _dlRows[key];
@@ -1716,7 +1831,7 @@ function _pollDl() {
         if (expected !== entry.row) _dlListEl.insertBefore(entry.row, expected || null);
       });
 
-      // Remove rows for jobs that no longer exist
+      // Remove rows for jobs that no longer exist / are filtered out
       Object.keys(_dlRows).forEach(function(key) {
         if (!seen[key]) {
           if (_dlRows[key].row.parentNode) _dlRows[key].row.remove();
@@ -1778,8 +1893,52 @@ function _jobRow(j) {
     };
     return cnl;
   }
+  // Retry button (failed / cancelled jobs)
+  function _jobFailed(st) { return st === "error" || st === "cancelled"; }
+  function makeRetryBtn(job) {
+    var r = el("button", { class: "cvt-btn ghost", style: { padding:"2px 6px", fontSize:"11px" }, title: "Retry this download" },
+      el("span", { class: "emoji-btn" }, "\u21BB"), " Retry");
+    r.onclick = function() {
+      var endpoint = job.retry_endpoint || (job.source === "hf" ? "/civitai/hf/download" : "/civitai/download");
+      var payload = job.retry_payload;
+      if (!payload) {
+        payload = job.source === "hf"
+          ? { repo_id: job.hf_repo_id, path: job.hf_path, overwrite: true }
+          : { url: job.url, model_version_id: job.model_version_id, filename: job.filename, overwrite: true };
+      }
+      r.disabled = true;
+      _api(endpoint, { method:"POST", body:JSON.stringify(payload) }).then(function() {
+        _toast("Retrying: " + (job.filename || job.name || "download"), "ok");
+        _api("/civitai/downloads-clear", { method:"POST", body:JSON.stringify({ task_id: job.id }) })
+          .catch(function() {})
+          .then(function() { _pollDl(); _ensureDlPolling(); });
+      }).catch(function(e) {
+        r.disabled = false;
+        _toast("Retry failed: " + e.message, "error");
+      });
+    };
+    return r;
+  }
+
+  // Dismiss button (remove a finished job from the list)
+  function makeDismissBtn(job) {
+    var dz = el("button", { class: "cvt-btn ghost", style: { padding:"2px 6px", fontSize:"11px" }, title: "Remove from list" }, "\u2715");
+    dz.onclick = function() {
+      _api("/civitai/downloads-clear", { method:"POST", body:JSON.stringify({ task_id: job.id }) })
+        .then(function() { _pollDl(); })
+        .catch(function(e) { _toast("Could not remove: " + e.message, "error"); });
+    };
+    return dz;
+  }
+
   var cancelBtn = _jobIsActive(j.status) ? makeCancelBtn() : null;
-  if (cancelBtn) top.appendChild(cancelBtn);
+  var retryBtn = _jobFailed(j.status) ? makeRetryBtn(j) : null;
+  var dismissBtn = !_jobIsActive(j.status) ? makeDismissBtn(j) : null;
+  var actions = el("div", { style: { display:"flex", gap:"4px", alignItems:"center", flexShrink:0 } });
+  if (retryBtn) actions.appendChild(retryBtn);
+  if (cancelBtn) actions.appendChild(cancelBtn);
+  if (dismissBtn) actions.appendChild(dismissBtn);
+  top.appendChild(actions);
   row.appendChild(top);
 
   // Sub info
@@ -1794,7 +1953,7 @@ function _jobRow(j) {
 
   // Filepath on success
   var pathEl = null;
-  if (j.filepath && j.status === "done") {
+  if (j.filepath && (j.status === "done" || j.status === "completed")) {
     pathEl = el("div", { class: "sub", style: { marginTop:"4px", color:"#9c9" } }, "Saved to " + j.filepath);
     row.appendChild(pathEl);
   }
@@ -1812,18 +1971,35 @@ function _jobRow(j) {
     var newWidth = npct + "%";
     if (barInner.style.width !== newWidth) barInner.style.width = newWidth;
 
-    // Cancel button appears/disappears with active state
+    // Action buttons follow the job state
     var active = _jobIsActive(status);
     if (active && !cancelBtn) {
       cancelBtn = makeCancelBtn();
-      top.appendChild(cancelBtn);
+      actions.appendChild(cancelBtn);
     } else if (!active && cancelBtn) {
       if (cancelBtn.parentNode) cancelBtn.remove();
       cancelBtn = null;
     }
 
+    var failed = _jobFailed(status);
+    if (failed && !retryBtn) {
+      retryBtn = makeRetryBtn(nj);
+      actions.insertBefore(retryBtn, actions.firstChild);
+    } else if (!failed && retryBtn) {
+      if (retryBtn.parentNode) retryBtn.remove();
+      retryBtn = null;
+    }
+
+    if (!active && !dismissBtn) {
+      dismissBtn = makeDismissBtn(nj);
+      actions.appendChild(dismissBtn);
+    } else if (active && dismissBtn) {
+      if (dismissBtn.parentNode) dismissBtn.remove();
+      dismissBtn = null;
+    }
+
     // Saved-to path appears on completion
-    var wantPath = nj.filepath && status === "done";
+    var wantPath = nj.filepath && (status === "done" || status === "completed");
     if (wantPath && !pathEl) {
       pathEl = el("div", { class: "sub", style: { marginTop:"4px", color:"#9c9" } }, "Saved to " + nj.filepath);
       row.appendChild(pathEl);

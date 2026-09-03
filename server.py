@@ -385,6 +385,13 @@ async def start_download(request):
             "type": model_type, "progress": 0, "speed": 0,
             "status": "downloading", "path": save_path, "cancelled": False,
             "started_at": time.time(),
+            "retry_endpoint": "/civitai/download",
+            "retry_payload": {
+                "url": download_url, "model_version_id": model_version_id,
+                "save_as": model_type, "filename": filename, "subfolder": subfolder,
+                "overwrite": True, "save_metadata": save_metadata,
+                "save_preview": save_preview,
+            },
         }
 
         def _download_blocking():
@@ -604,6 +611,32 @@ async def list_downloads(request):
         del DOWNLOAD_TASKS[k]
     items = list(DOWNLOAD_TASKS.values())
     return web.json_response({"items": items})
+
+
+@routes.post("/civitai/downloads-clear")
+async def clear_downloads(request):
+    """Remove finished (completed / error / cancelled) jobs from the task list."""
+    try:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        task_id = data.get("task_id")
+        finished = ("completed", "done", "error", "cancelled")
+        if task_id:
+            job = DOWNLOAD_TASKS.get(task_id)
+            if not job:
+                return web.json_response({"error": "Task not found"}, status=404)
+            if job.get("status") not in finished:
+                return web.json_response({"error": "Task still active"}, status=400)
+            del DOWNLOAD_TASKS[task_id]
+            return web.json_response({"success": True, "cleared": 1})
+        stale = [k for k, v in DOWNLOAD_TASKS.items() if v.get("status") in finished]
+        for k in stale:
+            del DOWNLOAD_TASKS[k]
+        return web.json_response({"success": True, "cleared": len(stale)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 @routes.post("/civitai/download-cancel")
@@ -1268,6 +1301,13 @@ async def hf_download(request):
             "source": "hf", "hf_repo_id": repo_id, "hf_path": path,
             "progress": 0, "speed": 0, "status": "downloading",
             "path": dest, "cancelled": False, "started_at": time.time(),
+            "retry_endpoint": "/civitai/hf/download",
+            "retry_payload": {
+                "repo_id": repo_id, "repo_type": repo_type, "revision": revision,
+                "path": path, "save_as": save_as, "subfolder": subfolder,
+                "overwrite": True, "save_metadata": save_metadata,
+                "save_preview": save_preview,
+            },
         }
 
         def _hf_dl_blocking():

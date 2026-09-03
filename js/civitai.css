@@ -1159,3 +1159,26 @@ img.nsfw:hover { filter: none; }
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* ── Downloads tab: filter chips + aggregate summary ─────────────── */
+.cvt-chip {
+  padding: 3px 10px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  border-radius: 999px;
+  border: 1px solid var(--civ-line);
+  background: rgba(255,255,255,.03);
+  color: var(--civ-text-dim);
+  cursor: pointer;
+  transition: background .18s var(--civ-ease-out), color .18s var(--civ-ease-out), border-color .18s var(--civ-ease-out);
+}
+.cvt-chip:hover { border-color: var(--civ-line-strong); color: var(--civ-text); }
+.cvt-chip.active {
+  background: rgba(255,255,255,.14);
+  border-color: rgba(255,255,255,.32);
+  color: #fff;
+  font-weight: 600;
+}
+.cvt-dl-summary { padding-top: 2px; }
+.cvt-root.light .cvt-chip { background: rgba(0,0,0,.03); color: #666; border-color: rgba(0,0,0,.10); }
+.cvt-root.light .cvt-chip.active { background: rgba(0,0,0,.12); color: #111; border-color: rgba(0,0,0,.25); }
