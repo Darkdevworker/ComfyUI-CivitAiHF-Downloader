@@ -1653,6 +1653,7 @@ function _hfDetail(repoIdOrData, repoType) {
 
 // ── 3. DOWNLOADS ────────────────────────────────────────────────────
 var _dlTimer = null;
+var _dlPolling = false;
 var _dlListEl = null;
 var _dlHeader = null;
 var _dlCountEl = null;
@@ -1778,12 +1779,20 @@ function _fmtDuration(sec) {
   return h + "h " + (m % 60) + "m";
 }
 
+function _apiFresh(path, opts) {
+  _cache.del(path);
+  return _api(path, opts);
+}
+
 function _pollDl() {
   if (!_dlListEl || !document.body.contains(_dlListEl)) {
     if (_dlTimer) { clearInterval(_dlTimer); _dlTimer = null; }
+    _dlPolling = false;
     return;
   }
-  _api("/civitai/downloads").then(function(d) {
+  if (_dlPolling) return;
+  _dlPolling = true;
+  _apiFresh("/civitai/downloads").then(function(d) {
     if (!_dlListEl || !document.body.contains(_dlListEl)) return;
     S.downloads = d.items || [];
 
@@ -1847,7 +1856,7 @@ function _pollDl() {
     } else {
       _dlTimer = null;
     }
-  }).catch(function(e) { console.warn("Download poll error:", e); });
+  }).catch(function(e) { console.warn("Download poll error:", e); _dlPolling = false; }).then(function() { if (_dlPolling) _dlPolling = false; });
 }
 
 function _ensureDlPolling() {
