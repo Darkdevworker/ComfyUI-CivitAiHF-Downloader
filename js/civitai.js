@@ -2090,11 +2090,7 @@ function renderSettings(pane) {
   s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\u26A1 Quick Actions"));
   var qaGroup = el("div", { class: "group" });
   var qaGrid = el("div", { class: "cvt-settings-actions-grid" });
-  [["\uD83C\uDFF7 Auto-Tag","Tag all models with Civitai metadata",function(){_api("/civitai/auto-tag",{method:"POST",body:"{}"}).then(function(){_toast("Auto-tag complete")}).catch(function(e){_toast("Error: "+e.message,"error")})}],
-   ["\uD83E\uDDF9 Cleanup","Find orphan files and invalid metadata",function(){_api("/civitai/cleanup-scan",{method:"POST"}).then(function(r){_toast("Found "+(r.issues||[]).length+" issues")}).catch(function(e){_toast("Error: "+e.message,"error")})}],
-   ["\uD83D\uDCC2 Organize","Auto-sort models into subfolders",function(){_api("/civitai/auto-organize",{method:"POST"}).then(function(r){_toast("Organized "+(r.moved||0)+" files");renderLocal(pane,true)}).catch(function(e){_toast("Error: "+e.message,"error")})}],
-    ["\uD83D\uDD0D Rescan","Force re-scan all model folders",function(){_api("/civitai/rescan",{method:"POST",body:JSON.stringify({force:true})}).then(function(){_toast("Rescanned")}).catch(function(e){_toast("Error: "+e.message,"error")})}],
-    ["\uD83D\uDD04 Refresh Nodes","Reload all node model dropdowns",function(){try{var r=app.refreshComboInNodes&&app.refreshComboInNodes();Promise.resolve(r).then(function(){_toast("Nodes refreshed","ok")}).catch(function(e){_toast("Error: "+(e&&e.message||e),"error")});}catch(e){_toast("Error: "+e.message,"error")}}]].forEach(function(a){
+  [["\uD83D\uDD04 Refresh Nodes","Reload all node model dropdowns",function(){try{var r=app.refreshComboInNodes&&app.refreshComboInNodes();Promise.resolve(r).then(function(){_toast("Nodes refreshed","ok")}).catch(function(e){_toast("Error: "+(e&&e.message||e),"error")});}catch(e){_toast("Error: "+e.message,"error")}}]].forEach(function(a){
     var card = el("div",{class:"cvt-settings-action-card",onclick:a[2]});
     card.appendChild(el("div",{class:"cvt-settings-action-title"},a[0]));
     card.appendChild(el("div",{class:"cvt-settings-action-desc"},a[1]));
