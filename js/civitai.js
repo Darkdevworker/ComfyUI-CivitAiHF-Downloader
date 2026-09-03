@@ -725,7 +725,7 @@ function _card(m) {
   var imgUrl = firstImg ? (typeof firstImg === "string" ? firstImg : firstImg.url || "") : "";
   var card = el("div", { class: "cvt-card", style: { position:"relative" } });
   // Bookmark button (top-right of card)
-  var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, "\u2605");
+  var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, el("img", { src: "bookmark-icon.png", style: { width:"16px", height:"16px", display:"block" } }));
   bookmarkBtn.onclick = function(e) {
     e.stopPropagation();
     var payload = {
@@ -1502,7 +1502,7 @@ function renderHF(pane) {
             el("span", {}, "\u2B07 " + _fmtNum(m.downloads || 0)),
             el("span", {}, "\u2764 " + _fmtNum(m.likes || 0)),
             totalSize ? el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes(totalSize)) : null)));
-        var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, "\u2605");
+        var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, el("img", { src: "bookmark-icon.png", style: { width:"16px", height:"16px", display:"block" } }));
         bookmarkBtn.onclick = function(e) {
           e.stopPropagation();
           var payload = {
@@ -1570,7 +1570,7 @@ function _hfDetail(repoIdOrData, repoType) {
   var right = el("div", { class: "right" });
   modal.appendChild(left); modal.appendChild(right);
   left.appendChild(el("h2", { style: { color:"#ff8c42" } }, repoId));
-  var bookmarkBtnDetail = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { marginTop:"6px", background:"rgba(0,0,0,.5)", border:"1px solid #ff8c42", borderRadius:"4px", padding:"4px 8px", color:"#ff8c42", fontSize:"12px", cursor:"pointer", display:"inline-flex", alignItems:"center", gap:"4px" } }, "★ Bookmark");
+  var bookmarkBtnDetail = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { marginTop:"6px", background:"rgba(0,0,0,.5)", border:"1px solid #ff8c42", borderRadius:"4px", padding:"4px 8px", color:"#ff8c42", fontSize:"12px", cursor:"pointer", display:"inline-flex", alignItems:"center", gap:"4px" } }, el("img", { src: "bookmark-icon.png", style: { width:"14px", height:"14px", display:"block" } }), " Bookmark");
   bookmarkBtnDetail.onclick = function(e) {
     e.stopPropagation();
     var payload = {
