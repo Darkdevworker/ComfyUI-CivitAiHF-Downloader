@@ -252,6 +252,7 @@ const TABS = [
   ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
   ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
   ["local", "Local", "\uD83D\uDCC1", "emoji-wiggle"],
+  ["bookmarks", "Bookmarks", "\u2B50", "emoji-wiggle"],
   ["settings", "Settings", "\u2699\uFE0F", "emoji-spin"],
 ];
 
@@ -416,6 +417,55 @@ function buildUI() {
   return root;
 }
 
+function renderBookmarks(pane) {
+  pane.innerHTML = "";
+  pane.appendChild(el("h2", { style: { fontSize:"14px", marginBottom:"6px" } }, "\u2B50 Bookmarks"));
+  var listEl = el("div");
+  pane.appendChild(listEl);
+  _api("/civitai/bookmarks").then(function(d) {
+    var items = d.items || d || [];
+    if (!items.length) {
+      listEl.appendChild(el("div", { class: "cvt-empty" }, "No bookmarks yet. Click \u2605 on any model card to save it here."));
+      return;
+    }
+    items.forEach(function(b) {
+      var row = el("div", { class: "cvt-row", style: { padding:"6px 0", borderBottom:"1px solid var(--civ-line)", display:"flex", alignItems:"center", gap:"8px" } });
+      var info = el("div", { style: { flex:"1" } });
+      info.appendChild(el("div", { style: { fontWeight:600, fontSize:"12px" } }, b.name || "Bookmark"));
+      info.appendChild(el("div", { style: { fontSize:"10px", color:"var(--civ-text-dim)" } },
+        (b.source || "") + (b.type ? " \u00B7 " + b.type : "") + (b.filename ? " \u00B7 " + b.filename : "")));
+      row.appendChild(info);
+      var btnRow = el("div", { style: { display:"flex", gap:"6px" } });
+      var dlBtn = el("button", { class: "cvt-btn cvt-btn-xs" }, "\u2B07 Download");
+      dlBtn.onclick = function() {
+        var body = {
+          model_version_id: b.model_version_id || b.id,
+          save_as: (b.type === "Checkpoint" ? "checkpoints" : (b.type === "LORA" || b.type === "LoCon" ? "loras" : b.type === "VAE" ? "vae" : b.type === "Controlnet" ? "controlnet" : b.type === "TextualInversion" ? "embeddings" : b.type === "Hypernetwork" ? "hypernetworks" : b.type === "Upscaler" ? "upscale_models" : "other")),
+          filename: b.filename || b.name || "model.safetensors",
+          subfolder: b.subfolder || "",
+          overwrite: false,
+          save_metadata: true, save_preview: true
+        };
+        _api("/civitai/download", { method:"POST", body: JSON.stringify(body) }).then(function() {
+          _toast("Queued: " + (b.filename || b.name || ""), "ok");
+        }).catch(function(e) { _toast("Download error: " + e.message, "error"); });
+      };
+      var delBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\u2715");
+      delBtn.onclick = function() {
+        _api("/civitai/bookmarks-delete", { method:"POST", body: JSON.stringify({ id: b.model_version_id || b.id }) }).then(function() {
+          renderBookmarks(pane);
+          _toast("Bookmark removed", "ok");
+        }).catch(function(e) { _toast("Delete error: " + e.message, "error"); });
+      };
+      btnRow.appendChild(dlBtn); btnRow.appendChild(delBtn);
+      row.appendChild(btnRow);
+      listEl.appendChild(row);
+    });
+  }).catch(function(e) {
+    listEl.innerHTML = '<div class="cvt-empty">Failed to load bookmarks: ' + e.message + '</div>';
+  });
+}
+
 function _switchTab(id, tabBar, panes) {
   S.curTab = id;
   tabBar.querySelectorAll(".cvt-tab").forEach(function(b) {
@@ -435,10 +485,13 @@ function _switchTab(id, tabBar, panes) {
     else if (id === "hf") renderHF(pane);
     else if (id === "downloads") renderDownloads(pane);
     else if (id === "local") renderLocal(pane);
+    else if (id === "bookmarks") renderBookmarks(pane);
     else if (id === "settings") renderSettings(pane);
   } else if (id === "downloads") {
     // Always refresh (and restart auto-refresh) when re-opening Downloads
     _pollDl();
+  } else if (id === "bookmarks") {
+    renderBookmarks(pane);
   }
 }
 
@@ -670,7 +723,22 @@ function _card(m) {
   var anyFlags = { hasPG13:true, hasR:true, hasX:true, hasXXX:true };
   var isNsfw = _matchNsfw(m, anyFlags) || (firstImg && _matchNsfw(firstImg, anyFlags));
   var imgUrl = firstImg ? (typeof firstImg === "string" ? firstImg : firstImg.url || "") : "";
-  var card = el("div", { class: "cvt-card" });
+  var card = el("div", { class: "cvt-card", style: { position:"relative" } });
+  // Bookmark button (top-right of card)
+  var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", fontSize:"13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, "\u2605");
+  bookmarkBtn.onclick = function(e) {
+    e.stopPropagation();
+    var payload = {
+      name: m.name || "", model_version_id: (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].id) || m.id || 0,
+      model_id: m.id || 0, filename: (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].files && m.modelVersions[0].files[0] && m.modelVersions[0].files[0].name) || (m.name || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
+      source: "civitai", type: m.type || ""
+    };
+    _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
+      if (r.success) _toast("Bookmarked: " + (m.name || ""), "ok");
+      else _toast((r.message || "Already bookmarked"), "ok");
+    }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
+  };
+  card.appendChild(bookmarkBtn);
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)" } });
   if (imgUrl) {
     var img = el("img", { src: _thumbUrl(imgUrl, 400), style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.outerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;opacity:.3">\uD83D\uDDBC</div>'; } });

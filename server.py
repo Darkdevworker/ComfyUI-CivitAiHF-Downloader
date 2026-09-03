@@ -1233,6 +1233,59 @@ async def model_info(request):
 print("[ComfyUI-CivitAiHF-Downloader] Server routes registered")
 
 
+# ── Bookmarks (server-side) ───────────────────────────────────────────
+_BOOKMARKS_FILE = os.path.join(os.path.dirname(__file__), "bookmarks.json")
+
+def _load_bookmarks():
+    try:
+        if os.path.isfile(_BOOKMARKS_FILE):
+            with open(_BOOKMARKS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def _save_bookmarks(bookmarks):
+    try:
+        with open(_BOOKMARKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(bookmarks, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+@routes.get("/civitai/bookmarks")
+async def list_bookmarks(request):
+    return web.json_response({"items": _load_bookmarks()})
+
+@routes.post("/civitai/bookmarks")
+async def save_bookmark(request):
+    try:
+        data = await request.json()
+        bookmarks = _load_bookmarks()
+        # Prevent duplicates by model_version_id
+        existing_ids = {str(b.get("model_version_id", b.get("id", ""))) for b in bookmarks}
+        key = str(data.get("model_version_id", data.get("id", "")))
+        if key in existing_ids:
+            return web.json_response({"success": False, "message": "Already bookmarked"})
+        bookmarks.append(data)
+        _save_bookmarks(bookmarks)
+        return web.json_response({"success": True, "count": len(bookmarks)})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+@routes.post("/civitai/bookmarks-delete")
+async def delete_bookmark(request):
+    try:
+        data = await request.json()
+        bookmark_id = data.get("id") or data.get("model_version_id")
+        bookmarks = _load_bookmarks()
+        new_list = [b for b in bookmarks if str(b.get("model_version_id", b.get("id", ""))) != str(bookmark_id)]
+        if len(new_list) == len(bookmarks):
+            return web.json_response({"success": False, "message": "Not found"})
+        _save_bookmarks(new_list)
+        return web.json_response({"success": True, "count": len(new_list)})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 # ── Missing utility endpoints ───────────────────────────────────────────
 
 @routes.get("/civitai/folders")
