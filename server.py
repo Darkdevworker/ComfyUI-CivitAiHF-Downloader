@@ -342,7 +342,7 @@ async def start_download(request):
             # Derive type from payload/model_type (avoid blocking network call here)
             model_type_raw = data.get("type", "") or model_type or ""
             type_map = {
-                "checkpoints": "Checkpoint", "loras": "LORA", "lora": "LORA",
+                "checkpoints": "Model", "loras": "LORA", "lora": "LORA",
                 "vae": "VAE", "controlnet": "Controlnet", "embeddings": "TextualInversion",
                 "hypernetworks": "Hypernetwork", "upscale_models": "Upscaler",
                 "animatediff_models": "MotionModule",
