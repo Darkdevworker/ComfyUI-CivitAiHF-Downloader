@@ -332,7 +332,21 @@ async def start_download(request):
         domain = utils._get_active_domain()
 
         if model_version_id and str(model_version_id).strip() and not download_url:
-            download_url = f"https://{domain}/api/download/models/{model_version_id}"
+            # Try fetching version info to get actual download URL from Civitai
+            try:
+                vi = await loop.run_in_executor(
+                    None, utils.CivitaiAPIUtils.get_model_version_info_by_id,
+                    int(model_version_id), domain
+                )
+                if vi and vi.get("downloadUrl"):
+                    download_url = vi["downloadUrl"]
+                elif vi and vi.get("files") and len(vi["files"]) > 0:
+                    # Try to construct URL from file info if downloadUrl not present
+                    download_url = f"https://{domain}/api/download/models/{model_version_id}"
+                else:
+                    download_url = f"https://{domain}/api/download/models/{model_version_id}"
+            except Exception:
+                download_url = f"https://{domain}/api/download/models/{model_version_id}"
 
         if not download_url:
             return web.json_response({"error": "Missing url or model_version_id"}, status=400)
