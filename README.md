@@ -27,6 +27,12 @@
 - **Metadata & preview images** — optionally save alongside models
 - **Batch downloads** from both Civitai and Hugging Face
 
+### ⭐ Bookmarks
+- **Both sources** — Civitai *and* Hugging Face models can be bookmarked (each is keyed on its own id, so HF repos no longer collide)
+- **Card grid** with preview, source chip, content band and remove button
+- **Click a card** to open that model's full detail view and download it, exactly like the Civitai and HF tabs
+- **Filter** by All / Civitai / Hugging Face
+
 ### 📂 Local Model Manager
 - **Auto-scan** all 29 ComfyUI model folder types
 - **Card grid** with preview images, model type, base model, and size
@@ -169,6 +175,7 @@ clip              detection         frame_interpolation latent_upscale_models  p
 | `nodes.py` | **Prompt Fetcher** graph node |
 | `nodes_display.py` | Markdown Presenter node |
 | `server.py` | All API endpoints (search, download, local management, settings, prompt fetcher) |
+| `bookmarks_store.py` | Bookmark storage + identity rules (Civitai and Hugging Face side by side) — testable without ComfyUI |
 | `utils.py` | Database manager, Civitai/HF API utilities, hash computation, model scanning |
 | `js/civitai.js` | Full sidebar UI (tabs, modals, lightbox, downloads, settings, keyboard nav, animations) |
 | `js/rating.js` | Content-band definitions (PG / PG-13 / R / X / XXX), rating normalisation, blur + filter helpers |

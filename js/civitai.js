@@ -368,53 +368,212 @@ function buildUI() {
   return root;
 }
 
+/* ── Bookmarks ───────────────────────────────────────────────────────
+   Bookmarks from BOTH sources are shown as cards, exactly like the Civitai
+   and Hugging Face grids: click a card to open that model's detail view
+   (with its download button), and ✕ removes the bookmark.
+   ─────────────────────────────────────────────────────────────────── */
+
+function _bmSource(b) {
+  var src = String((b && (b.source || (b.repo_id ? "hf" : "civitai"))) || "civitai").toLowerCase();
+  return (src === "hf" || src.indexOf("hugging") === 0) ? "hf" : "civitai";
+}
+
+function _bmFolderForType(type) {
+  switch (type) {
+    case "Checkpoint": return "checkpoints";
+    case "LORA": case "LoCon": case "DoRA": return "loras";
+    case "VAE": return "vae";
+    case "Controlnet": return "controlnet";
+    case "TextualInversion": return "embeddings";
+    case "Hypernetwork": return "hypernetworks";
+    case "Upscaler": return "upscale_models";
+    default: return "other";
+  }
+}
+
+/** Open a bookmark's detail view — Civitai model page or Hugging Face repo. */
+function _openBookmark(b) {
+  if (_bmSource(b) === "hf") {
+    if (!b.repo_id) { _toast("This bookmark has no repo id", "error"); return; }
+    _hfDetail(b.repo_id, b.repo_type || "model");
+    return;
+  }
+  function open(r) {
+    if (r && r.kind === "model" && r.data) { openDetail(r.data); return true; }
+    return false;
+  }
+  function fail(e) { _toast("Lookup failed: " + ((e && e.message) || "unknown error"), "error"); }
+  if (b.model_id) {
+    _api("/civitai/lookup?model_id=" + encodeURIComponent(b.model_id)).then(function(r) {
+      if (!open(r)) _toast("Civitai did not return this model", "error");
+    }).catch(fail);
+  } else if (b.model_version_id) {
+    _api("/civitai/lookup?version_id=" + encodeURIComponent(b.model_version_id)).then(function(r) {
+      var mid = r && r.data && (r.data.modelId || (r.data.model && r.data.model.id));
+      if (!mid) { _toast("Civitai did not return this model", "error"); return; }
+      _api("/civitai/lookup?model_id=" + encodeURIComponent(mid)).then(function(r2) {
+        if (!open(r2)) _toast("Civitai did not return this model", "error");
+      }).catch(fail);
+    }).catch(fail);
+  } else {
+    _toast("This bookmark has no model id", "error");
+  }
+}
+
+/** Quick download — HF needs a file path, so it opens the detail view instead. */
+function _downloadBookmark(b) {
+  if (_bmSource(b) === "hf") { _openBookmark(b); return; }
+  var body = {
+    model_version_id: b.model_version_id || b.id,
+    save_as: _bmFolderForType(b.type),
+    filename: b.filename || b.name || "model.safetensors",
+    subfolder: b.subfolder || "",
+    overwrite: false,
+    save_metadata: true, save_preview: true
+  };
+  _api("/civitai/download", { method: "POST", body: JSON.stringify(body) }).then(function() {
+    _toast("Queued: " + (b.filename || b.name || ""), "ok");
+  }).catch(function(e) { _toast("Download error: " + e.message, "error"); });
+}
+
+function _bookmarkCard(b, onChange) {
+  var src = _bmSource(b);
+  var name = b.name || b.repo_id || "Untitled";
+  var card = el("div", { class: "cvt-card", style: { position: "relative" },
+    title: "Click to open " + name + " \u2014 details + download" });
+
+  // ---- thumbnail ----
+  var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)", overflow: "hidden", position: "relative" } });
+  if (src === "hf") {
+    var ini = String(b.repo_id || name).split("/").filter(Boolean).map(function(s) { return s[0]; })
+      .join("").toUpperCase().slice(0, 2) || "HF";
+    thumb.style.background = "linear-gradient(135deg,#3a2a5a,#1e3a5a)";
+    thumb.style.display = "flex"; thumb.style.alignItems = "center"; thumb.style.justifyContent = "center";
+    thumb.style.color = "#fff"; thumb.style.fontSize = "28px"; thumb.style.fontWeight = "700";
+    thumb.textContent = ini;
+  } else if (b.image) {
+    thumb.appendChild(el("img", { src: _thumbUrl(b.image, 400),
+      style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+      onerror: function() { this.style.display = "none"; } }));
+  } else {
+    thumb.appendChild(el("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", fontSize: "24px", opacity: ".3" } }, "\uD83D\uDDBC"));
+  }
+  card.appendChild(thumb);
+
+  // ---- content band (Civitai only — HF repos carry no rating) ----
+  if (src === "civitai" && b.nsfw_level != null && b.nsfw_level !== "") {
+    var band = bandIdOfImage({ nsfwLevel: b.nsfw_level });
+    applyBlur(thumb, band);
+    card.appendChild(makeBandBadge(band));
+  }
+
+  // ---- source chip, bottom-left of the thumbnail ----
+  thumb.appendChild(el("span", { class: "cvt-badge",
+    style: { position: "absolute", bottom: "4px", left: "4px", zIndex: 2, fontSize: "8.5px", padding: "1px 5px",
+             textTransform: "none", letterSpacing: ".02em",
+             background: src === "hf" ? "#ff8c42" : "rgba(20,20,20,.85)",
+             color: src === "hf" ? "#1a1005" : "var(--civ-text-dim)", borderColor: "rgba(255,255,255,.14)" } },
+    src === "hf" ? "HF" : "Civitai"));
+
+  // ---- remove ----
+  var rmBtn = el("button", { class: "cvt-bookmark-btn", title: "Remove bookmark",
+    style: { position: "absolute", top: "4px", right: "4px", zIndex: 3, background: "rgba(0,0,0,.5)",
+             border: "1px solid rgba(255,255,255,.18)", borderRadius: "50%", width: "22px", height: "22px",
+             color: "#e88", cursor: "pointer", fontSize: "11px", lineHeight: 1,
+             display: "flex", alignItems: "center", justifyContent: "center" } }, "\u2715");
+  rmBtn.onclick = function(e) {
+    e.stopPropagation();
+    _api("/civitai/bookmarks-delete", { method: "POST", body: JSON.stringify({
+      id: b.id || "", source: src,
+      model_version_id: b.model_version_id || 0, repo_id: b.repo_id || ""
+    }) }).then(function() {
+      _toast("Bookmark removed", "ok");
+      if (onChange) onChange();
+    }).catch(function(e2) { _toast("Delete error: " + e2.message, "error"); });
+  };
+  card.appendChild(rmBtn);
+
+  // ---- download (Civitai can queue straight away; HF opens detail to pick a file) ----
+  var dlBtn = el("button", { class: "cvt-bookmark-btn", title: src === "hf" ? "Open repo to pick a file" : "Download",
+    style: { position: "absolute", top: "30px", right: "4px", zIndex: 3, background: "rgba(0,0,0,.5)",
+             border: "1px solid rgba(255,255,255,.18)", borderRadius: "50%", width: "22px", height: "22px",
+             color: "#8fd", cursor: "pointer", fontSize: "11px", lineHeight: 1,
+             display: "flex", alignItems: "center", justifyContent: "center" } }, "\u2B07");
+  dlBtn.onclick = function(e) { e.stopPropagation(); _downloadBookmark(b); };
+  card.appendChild(dlBtn);
+
+  card.appendChild(el("div", { class: "body" },
+    el("div", { class: "title", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, name),
+    el("div", { class: "meta" },
+      el("span", {}, src === "hf" ? (b.repo_id || "HF repo") : (b.type || "Civitai")),
+      b.filename ? el("span", { style: { fontSize: "9px", opacity: ".6" }, title: b.filename }, b.filename) : null)));
+
+  card.onclick = function() { _openBookmark(b); };
+  return card;
+}
+
 function renderBookmarks(pane) {
-  pane.innerHTML = "";
-  pane.appendChild(el("h2", { style: { fontSize:"14px", marginBottom:"6px" } }, "\u2B50 Bookmarks"));
-  var listEl = el("div");
-  pane.appendChild(listEl);
-  _api("/civitai/bookmarks").then(function(d) {
-    var items = d.items || d || [];
-    if (!items.length) {
-      listEl.appendChild(el("div", { class: "cvt-empty" }, "No bookmarks yet. Click \u2605 on any model card to save it here."));
+  pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
+
+  var head = el("div", { class: "cvt-searchbar" });
+  var titleRow = el("div", { class: "cvt-row", style: { alignItems: "baseline", justifyContent: "space-between" } });
+  titleRow.appendChild(el("div", { style: { fontSize: "12.5px", fontWeight: 600 } }, "\u2B50 Bookmarks"));
+  var countEl = el("div", { style: { fontSize: "10px", color: "var(--civ-text-mute)" } }, "Loading\u2026");
+  titleRow.appendChild(countEl);
+  head.appendChild(titleRow);
+
+  var filterRow = el("div", { class: "cvt-row", style: { marginTop: "6px", gap: "4px" } });
+  head.appendChild(filterRow);
+  pane.appendChild(head);
+
+  var grid = el("div", { class: "cvt-grid", id: "cvt-bm-grid" });
+  pane.appendChild(grid);
+
+  var items = [];
+  var filter = "all";
+
+  [["all", "All"], ["civitai", "Civitai"], ["hf", "Hugging Face"]].forEach(function(f) {
+    var btn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { flex: "0 0 auto", opacity: f[0] === "all" ? "1" : ".6" } }, f[1]);
+    btn.onclick = function() {
+      filter = f[0];
+      filterRow.querySelectorAll("button").forEach(function(b) { b.style.opacity = ".6"; });
+      btn.style.opacity = "1";
+      _render();
+    };
+    filterRow.appendChild(btn);
+  });
+
+  function _render() {
+    grid.innerHTML = "";
+    var shown = items.filter(function(b) { return filter === "all" || _bmSource(b) === filter; });
+    var civ = items.filter(function(b) { return _bmSource(b) === "civitai"; }).length;
+    var hf = items.length - civ;
+    countEl.textContent = items.length + (items.length === 1 ? " saved" : " saved") +
+      " \u00B7 " + civ + " Civitai \u00B7 " + hf + " HF";
+    if (!shown.length) {
+      grid.appendChild(el("div", { class: "cvt-empty", style: { gridColumn: "1/-1" } },
+        items.length
+          ? "No " + (filter === "hf" ? "Hugging Face" : "Civitai") + " bookmarks."
+          : "No bookmarks yet. Click \u2605 on any Civitai or Hugging Face card to save it here."));
       return;
     }
-    items.forEach(function(b) {
-      var row = el("div", { class: "cvt-row", style: { padding:"6px 0", borderBottom:"1px solid var(--civ-line)", display:"flex", alignItems:"center", gap:"8px" } });
-      var info = el("div", { style: { flex:"1" } });
-      info.appendChild(el("div", { style: { fontWeight:600, fontSize:"12px" } }, b.name || "Bookmark"));
-      info.appendChild(el("div", { style: { fontSize:"10px", color:"var(--civ-text-dim)" } },
-        (b.source || "") + (b.type ? " \u00B7 " + b.type : "") + (b.filename ? " \u00B7 " + b.filename : "")));
-      row.appendChild(info);
-      var btnRow = el("div", { style: { display:"flex", gap:"6px" } });
-      var dlBtn = el("button", { class: "cvt-btn cvt-btn-xs" }, "\u2B07 Download");
-      dlBtn.onclick = function() {
-        var body = {
-          model_version_id: b.model_version_id || b.id,
-          save_as: (b.type === "Checkpoint" ? "checkpoints" : (b.type === "LORA" || b.type === "LoCon" ? "loras" : b.type === "VAE" ? "vae" : b.type === "Controlnet" ? "controlnet" : b.type === "TextualInversion" ? "embeddings" : b.type === "Hypernetwork" ? "hypernetworks" : b.type === "Upscaler" ? "upscale_models" : "other")),
-          filename: b.filename || b.name || "model.safetensors",
-          subfolder: b.subfolder || "",
-          overwrite: false,
-          save_metadata: true, save_preview: true
-        };
-        _api("/civitai/download", { method:"POST", body: JSON.stringify(body) }).then(function() {
-          _toast("Queued: " + (b.filename || b.name || ""), "ok");
-        }).catch(function(e) { _toast("Download error: " + e.message, "error"); });
-      };
-      var delBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\u2715");
-      delBtn.onclick = function() {
-        _api("/civitai/bookmarks-delete", { method:"POST", body: JSON.stringify({ id: b.model_version_id || b.id }) }).then(function() {
-          renderBookmarks(pane);
-          _toast("Bookmark removed", "ok");
-        }).catch(function(e) { _toast("Delete error: " + e.message, "error"); });
-      };
-      btnRow.appendChild(dlBtn); btnRow.appendChild(delBtn);
-      row.appendChild(btnRow);
-      listEl.appendChild(row);
+    var frag = document.createDocumentFragment();
+    shown.forEach(function(b) { frag.appendChild(_bookmarkCard(b, function() { _reload(); })); });
+    grid.appendChild(frag);
+  }
+
+  function _reload() {
+    _api("/civitai/bookmarks").then(function(d) {
+      items = d.items || d || [];
+      _render();
+    }).catch(function(e) {
+      grid.innerHTML = "";
+      grid.appendChild(el("div", { class: "cvt-empty", style: { gridColumn: "1/-1", color: "#f88" } },
+        "Failed to load bookmarks: " + e.message));
     });
-  }).catch(function(e) {
-    listEl.innerHTML = '<div class="cvt-empty">Failed to load bookmarks: ' + e.message + '</div>';
-  });
+  }
+  _reload();
 }
 
 function _switchTab(id, tabBar, panes) {
@@ -695,7 +854,8 @@ function _card(m) {
     var payload = {
       name: m.name || "", model_version_id: (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].id) || m.id || 0,
       model_id: m.id || 0, filename: (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].files && m.modelVersions[0].files[0] && m.modelVersions[0].files[0].name) || (m.name || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
-      source: "civitai", type: m.type || ""
+      source: "civitai", type: m.type || "",
+      image: imgUrl || "", nsfw_level: (m.nsfwLevel != null ? m.nsfwLevel : modelBand)
     };
     _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
       if (r.success) _toast("Bookmarked: " + (m.name || ""), "ok");
