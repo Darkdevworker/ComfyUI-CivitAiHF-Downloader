@@ -1,0 +1,331 @@
+(pane) {
+  var sb = el("div", { class: "cvt-searchbar" });
+
+  // ---- Manual entry row (repo URL / ID) ----
+  var directIn = el("input", { type: "text", placeholder: "user/repo / URL\u2026", style: { flex:"1", fontFamily:"monospace", fontSize:"11px", background:"#1c1410", borderColor:"#5a3a2a" } });
+  var directBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, "\uD83C\uDFAF");
+  var directRow = el("div", { class: "cvt-row", style: { marginBottom:"6px" } });
+  directRow.appendChild(directIn); directRow.appendChild(directBtn);
+  sb.appendChild(directRow);
+
+  directBtn.onclick = function() { _lookupHF(directIn.value, directIn); };
+  directIn.onkeydown = function(e) { if (e.key === "Enter") directBtn.click(); };
+
+  // ---- Search ----
+  var row1 = el("div", { class: "cvt-row" });
+  var qIn = el("input", { type: "text", placeholder: "Search Hugging Face\u2026", id: "cvt-hf-q", style: { flex:1 } });
+  var sortSel = el("select", { id: "cvt-hf-sort", class: "cvt-select-sm", title: "Sort by" });
+  HF_SORTS.forEach(function(s) { sortSel.appendChild(el("option", { value: s }, s)); });
+  row1.appendChild(qIn); row1.appendChild(sortSel); sb.appendChild(row1);
+
+  var row2 = el("div", { class: "cvt-row", style: { flexWrap:"wrap", gap:"4px", alignItems:"center" } });
+  var ptSel = el("select", { id: "cvt-hf-pt", class: "cvt-select-sm", title: "Pipeline" });
+  HF_PIPELINES.forEach(function(p) { ptSel.appendChild(el("option", { value: p }, p || "Any pipeline")); });
+  var libSel = el("select", { id: "cvt-hf-lib", class: "cvt-select-sm", title: "Library" });
+  HF_LIBRARIES.forEach(function(l) { libSel.appendChild(el("option", { value: l }, l || "Any library")); });
+  var authorIn = el("input", { type: "text", placeholder: "Author", style: { flex:"0 0 auto", width:"100px", fontSize:"11px" } });
+  var goBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, "\uD83D\uDD0D");
+  row2.appendChild(ptSel); row2.appendChild(libSel); row2.appendChild(authorIn); row2.appendChild(goBtn);
+  sb.appendChild(row2);
+  pane.appendChild(sb);
+
+  var grid = el("div", { class: "cvt-grid", id: "cvt-hf-grid" });
+  pane.appendChild(grid);
+
+  goBtn.onclick = _srch;
+  qIn.onkeydown = function(e) { if (e.key === "Enter") _srch(); };
+
+  function _srch() {
+    grid.innerHTML = '<div class="cvt-spinner"></div>';
+    S.hf.query = qIn.value;
+    S.hf.sort = sortSel.value;
+    S.hf.pipeline_tag = ptSel.value;
+    S.hf.library = libSel.value;
+    S.hf.author = authorIn.value;
+    var params = new URLSearchParams({
+      query: S.hf.query, sort: S.hf.sort,
+      limit: "30",
+    });
+    if (S.hf.pipeline_tag) params.set("pipeline_tag", S.hf.pipeline_tag);
+    if (S.hf.library) params.set("library", S.hf.library);
+    if (S.hf.author) params.set("author", S.hf.author);
+    _api("/civitai/hf-search?" + params.toString()).then(function(d) {
+      S.hf.items = d.items || [];
+      grid.innerHTML = "";
+      if (!S.hf.items.length) { grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1">No models found</div>'; return; }
+      S.hf.items.forEach(function(m) {
+        var rep = m.modelId || m.id || "";
+        var ini = rep.split("/").filter(Boolean).map(function(s) { return s[0]; }).join("").toUpperCase().slice(0, 2) || "HF";
+        var totalSize = 0;
+        if (m.siblings && m.siblings.length) {
+          m.siblings.forEach(function(s) {
+            if (s.size && /\.(safetensors|ckpt|pt|bin|pth|gguf)$/i.test(s.rfilename || "")) totalSize += s.size;
+          });
+        }
+        var card = el("div", { class: "cvt-card" });
+        card.appendChild(el("div", { class: "thumb", style: { display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#3a2a5a,#1e3a5a)",color:"#fff",fontSize:"28px",fontWeight:700 } }, ini));
+        card.appendChild(el("div", { class: "body" },
+          el("div", { class: "title", style: { color:"#ff8c42" } }, rep),
+          el("div", { class: "meta" },
+            el("span", {}, "\u2B07 " + _fmtNum(m.downloads || 0)),
+            el("span", {}, "\u2764 " + _fmtNum(m.likes || 0)),
+            totalSize ? el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes(totalSize)) : null)));
+        var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, el("img", { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpUlEQVR4nO2ZvUoDQRSFv2ASBQmCjYUPIIiFYAKiYmmbN7DxAXwFX0GxshTUNIqIYGdnaSGijdj405kuKmKSkZUJjIOZrLszGyT3gwv7c+ecOcvMFrsgCMJAsgTUgGegCaiE1QSegANgMYuJ54HtFBPuVVvaIxghJ6+MEMGWjWl0DMwBxRSaRaAMnBi6bWCBANQMk8jQN0eG/l4A/e8N2zGInrxvyob+YwD9H2+bNMumG0Xr7eQdc/2HQoX0kAAxUBLAgQSIgZIADiRADJQEcCABYqAkgAMJEAMlARxIgBgoCeBRfAW40RUd/5sABWADaFnfejaBYU8eiYgjPgVcWr1mXQMzKT0S00t8DWhYfae6zGsN3ZvEIxXdxMeAfev+O7AO5HTPKvBq9RwC4/0OMA/cW/dugdlfxk8DV1bvA7DcjwB5vVHtfwO7wKhDY0Rv5rYxpqWvFbIMcGGdvwDVP2hV9Rjl0AwawKxzYDKB3gRw5tD1jm3wqZfRUArNnN7sH1kEeDPE74CKR+2K1uzoR17eiZ52HdgBSgH0S1q7rr0EQRgEvgCZsWa8d9MqpQAAAABJRU5ErkJggg==", style: { width:"16px", height:"16px", display:"block" } }));
+        bookmarkBtn.onclick = function(e) {
+          e.stopPropagation();
+          var payload = {
+            name: rep || "", model_version_id: 0, model_id: 0,
+            filename: (rep || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
+            source: "hf", repo_id: rep || "", repo_type: "model"
+          };
+          _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
+            if (r.success) _toast("Bookmarked: " + (rep || ""), "ok");
+            else _toast((r.message || "Already bookmarked"), "ok");
+          }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
+        };
+        card.appendChild(bookmarkBtn);
+        card.onclick = function() { _hfDetail(rep); };
+        grid.appendChild(card);
+      });
+    }).catch(function(e) { grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ' + e.message + '</div>'; });
+  }
+}
+
+function _lookupHF(raw, fieldEl) {
+  var v = (raw || "").trim();
+  if (!v) { _toast("Enter a repo in format: user/repo or paste a HuggingFace URL", "error"); return; }
+  // Parse full HF URLs incl. datasets/spaces: https://huggingface.co/datasets/user/repo/tree/main
+  var m = v.match(/huggingface\.co\/(.+)$/);
+  if (m) v = m[1];
+  v = v.replace(/^\/+/, "");
+  var repoType = "model";
+  var tm = v.match(/^(datasets|spaces|models)\/(.+)$/);
+  if (tm) {
+    repoType = { datasets: "dataset", spaces: "space", models: "model" }[tm[1]];
+    v = tm[2];
+  }
+  // Strip trailing /tree/main or other path parts
+  v = v.replace(/\/(tree|blob|resolve|blame|commits|discussions|files)\/.*$/, "");
+  v = v.replace(/\/+$/, "");
+  var vp = v.split("/").filter(Boolean);
+  if (vp.length >= 2) v = vp[0] + "/" + vp[1];
+  if (v.indexOf("/") < 0) { _toast("Enter a repo in format: user/repo", "error"); return; }
+  if (fieldEl) fieldEl.disabled = true;
+  _api("/civitai/hf-lookup?repo=" + encodeURIComponent(v)).then(function(data) {
+    if (data && data.id) {
+      _hfDetail(data.id, data.repo_type || repoType);
+    } else {
+      _toast("Repo not found", "error");
+    }
+  }).catch(function(e) { _toast("Lookup failed: " + e.message, "error"); })
+  .then(function() { if (fieldEl) fieldEl.disabled = false; });
+}
+
+function _hfDetail(repoIdOrData, repoType) {
+  var repoId = typeof repoIdOrData === "string" ? repoIdOrData : (repoIdOrData.id || "");
+  repoType = repoType || (typeof repoIdOrData === "object" && repoIdOrData.repo_type) || "model";
+  if (!repoId || repoId.indexOf("/") < 0) { _toast("Invalid repo ID", "error"); return; }
+  var bg = el("div", { class: "cvt-modal-bg" });
+  var wrap = el("div", { class: "cvt-modal-wrap" });
+  var closeBtn = el("button", { class: "close" }, "\u00D7");
+  var modal = el("div", { class: "cvt-modal" });
+  wrap.appendChild(closeBtn); wrap.appendChild(modal); bg.appendChild(wrap);
+  document.body.appendChild(bg);
+  closeBtn.onclick = function() { bg.remove(); };
+  bg.onclick = function(e) { if (e.target === bg) bg.remove(); };
+
+  var left = el("div", { class: "left" });
+  var right = el("div", { class: "right" });
+  modal.appendChild(left); modal.appendChild(right);
+  left.appendChild(el("h2", { style: { color:"#ff8c42" } }, repoId));
+  var bookmarkBtnDetail = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { marginTop:"6px", background:"rgba(0,0,0,.5)", border:"1px solid #ff8c42", borderRadius:"4px", padding:"4px 8px", color:"#ff8c42", fontSize:"12px", cursor:"pointer", display:"inline-flex", alignItems:"center", gap:"4px" } }, el("img", { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpUlEQVR4nO2ZvUoDQRSFv2ASBQmCjYUPIIiFYAKiYmmbN7DxAXwFX0GxshTUNIqIYGdnaSGijdj405kuKmKSkZUJjIOZrLszGyT3gwv7c+ecOcvMFrsgCMJAsgTUgGegCaiE1QSegANgMYuJ54HtFBPuVVvaIxghJ6+MEMGWjWl0DMwBxRSaRaAMnBi6bWCBANQMk8jQN0eG/l4A/e8N2zGInrxvyob+YwD9H2+bNMumG0Xr7eQdc/2HQoX0kAAxUBLAgQSIgZIADiRADJQEcCABYqAkgAMJEAMlARxIgBgoCeBRfAW40RUd/5sABWADaFnfejaBYU8eiYgjPgVcWr1mXQMzKT0S00t8DWhYfae6zGsN3ZvEIxXdxMeAfev+O7AO5HTPKvBq9RwC4/0OMA/cW/dugdlfxk8DV1bvA7DcjwB5vVHtfwO7wKhDY0Rv5rYxpqWvFbIMcGGdvwDVP2hV9Rjl0AwawKxzYDKB3gRw5tD1jm3wqZfRUArNnN7sH1kEeDPE74CKR+2K1uzoR17eiZ52HdgBSgH0S1q7rr0EQRgEvgCZsWa8d9MqpQAAAABJRU5ErkJggg==", style: { width:"14px", height:"14px", display:"block" } }), " Bookmark");
+  bookmarkBtnDetail.onclick = function(e) {
+    e.stopPropagation();
+    var payload = {
+      name: repoId || "", model_version_id: 0, model_id: 0,
+      filename: (repoId || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
+      source: "hf", repo_id: repoId || "", repo_type: repoType || "model"
+    };
+    _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
+      if (r.success) _toast("Bookmarked: " + (repoId || ""), "ok");
+      else _toast((r.message || "Already bookmarked"), "ok");
+    }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
+  };
+  left.appendChild(bookmarkBtnDetail);
+  left.appendChild(el("div", { class: "sub" }, "Loading\u2026"));
+
+  _api("/civitai/hf-files?repo_id=" + encodeURIComponent(repoId) + "&repo_type=" + encodeURIComponent(repoType)).then(function(info) {
+    var files = Array.isArray(info) ? info : info.siblings || [];
+    var data = info.data || info;
+    var pt = data.pipeline_tag || data.library_name || "?";
+    left.querySelector(".sub").innerHTML = "";
+    left.querySelector(".sub").textContent = "task: " + pt + " \u00B7 \u2B07 " + _fmtNum(data.downloads || 0) + " \u00B7 \u2764 " + _fmtNum(data.likes || 0);
+
+    // Revision input
+    right.appendChild(el("label", {}, "Branch / commit"));
+    var revIn = el("input", { type: "text", value: "main", style: { marginTop:"4px" } });
+    right.appendChild(revIn);
+
+    // Weights filter
+    right.appendChild(el("label", {}, "Files"));
+    var filterRow = el("div", { class: "cvt-row", style: { marginTop:"4px" } });
+    var onlyWeights = el("input", { type: "checkbox", checked: true });
+    filterRow.appendChild(el("label", { style: { display:"flex", alignItems:"center", gap:"4px", fontSize:"11px" } }, onlyWeights, " weights only"));
+    right.appendChild(filterRow);
+
+    // File list as select
+    var fileSel = el("select", { size: "12", style: { width:"100%", marginTop:"4px", padding:"4px", minHeight:"180px" } });
+    right.appendChild(fileSel);
+
+    function fillFiles() {
+      var sibs = files.slice();
+      sibs.sort(function(a, b) { return (a.rfilename || "").localeCompare(b.rfilename || ""); });
+      fileSel.innerHTML = "";
+      for (var i = 0; i < sibs.length; i++) {
+        var fn = sibs[i].rfilename || "";
+        if (onlyWeights.checked && !/\.(safetensors|ckpt|pt|bin|pth|gguf|onnx|pkl|npz)$/i.test(fn)) continue;
+        var sz = sibs[i].size ? "  (" + _fmtBytes(sibs[i].size) + ")" : "";
+        fileSel.appendChild(el("option", { value: fn }, fn + sz));
+      }
+      // Auto-pick biggest .safetensors
+      var best = null, bestSize = 0;
+      for (var j = 0; j < fileSel.options.length; j++) {
+        var sib = files.find(function(x) { return x.rfilename === fileSel.options[j].value; });
+        if (sib && /\.safetensors$/i.test(fileSel.options[j].value) && (sib.size || 0) > bestSize) {
+          best = fileSel.options[j].value; bestSize = sib.size || 0;
+        }
+      }
+      if (best) fileSel.value = best;
+    }
+    onlyWeights.onchange = fillFiles;
+    fillFiles();
+
+    // Folder dropdown
+    right.appendChild(el("label", { style: { marginTop:"10px" } }, "Folder"));
+    var folderSel = el("select");
+    folderSel.appendChild(el("option", { value: "auto" }, "Auto"));
+    _api("/civitai/folders").then(function(r) {
+      (r.folders || []).forEach(function(f) { folderSel.appendChild(el("option", { value: f }, f)); });
+    }).catch(function() {});
+    right.appendChild(folderSel);
+
+    // Subfolder + overwrite
+    right.appendChild(el("label", {}, "Subfolder"));
+    var subIn = el("input", { type: "text", placeholder: "subfolder\u2026", style: { marginTop:"4px" } });
+    right.appendChild(subIn);
+
+    var overwriteLbl = el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"8px" } },
+      el("input", { type: "checkbox" }), " Overwrite");
+    right.appendChild(overwriteLbl);
+    var subfolderLbl = el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } },
+      el("input", { type: "checkbox" }), " Keep subfolders");
+    right.appendChild(subfolderLbl);
+
+    // Metadata + preview checkboxes
+    var metaCb = el("input", { type: "checkbox" });
+    var prevCb = el("input", { type: "checkbox" });
+    metaCb.checked = S.settings.saveMeta;
+    prevCb.checked = S.settings.savePrev;
+    right.appendChild(el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"6px" } }, metaCb, " Save .civitai.json"));
+    right.appendChild(el("label", { class: "check", style: { display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" } }, prevCb, " Save preview"));
+
+    // Download + Metadata only buttons
+    var dlBtn = el("button", { class: "cvt-btn cvt-btn-xs", style: { marginTop:"10px", width:"100%" } },
+      el("span", { class: "emoji-btn" }, "\u2B07"), " Download");
+    var metaOnlyBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs", style: { marginTop:"6px", width:"100%" } }, "\uD83D\uDCC4 Meta");
+    right.appendChild(dlBtn); right.appendChild(metaOnlyBtn);
+
+    var statusLine = el("div", { class: "sub", style: { marginTop:"10px" } });
+    right.appendChild(statusLine);
+
+    function _submitHF(metadataOnly) {
+      var btn = metadataOnly ? metaOnlyBtn : dlBtn;
+      var path = fileSel.value;
+      if (!path && !metadataOnly) {         statusLine.innerHTML = "<span style='color:#e88'>Pick a file first.</span>"; return; }
+      btn.disabled = true;
+      statusLine.textContent = metadataOnly ? "Fetching metadata\u2026" : "Starting download\u2026";
+      var body = {
+        repo_id: repoId,
+        repo_type: repoType,
+        revision: revIn.value.trim() || "main",
+        path: path,
+        save_as: folderSel.value || "auto",
+        subfolder: subIn.value.trim(),
+        overwrite: overwriteLbl.querySelector("input").checked,
+        preserve_subfolders: subfolderLbl.querySelector("input").checked,
+        save_metadata: metaCb.checked,
+        save_preview: prevCb.checked,
+        metadata_only: metadataOnly,
+      };
+      _api("/civitai/hf/download", { method:"POST", body:JSON.stringify(body) }).then(function(job) {
+        statusLine.innerHTML = "";
+        statusLine.appendChild(document.createTextNode("Queued: "));
+        statusLine.appendChild(el("b", {}, job.id));
+        statusLine.appendChild(document.createTextNode(" \u2014 open "));
+        var dlLink = el("a", { href: "#", style: { color:"#ec9", cursor:"pointer" } }, "Downloads");
+        dlLink.onclick = function(e) {
+          e.preventDefault(); bg.remove();
+          if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "downloads" }));
+        };
+        statusLine.appendChild(dlLink);
+        statusLine.appendChild(document.createTextNode(" to monitor."));
+        _toast(metadataOnly ? "HF metadata queued" : "HF queued: " + (job.filename || path), "ok");
+        _ensureDlPolling();
+      }).catch(function(e) {
+        statusLine.innerHTML = "";
+        statusLine.appendChild(el("span", { style: { color:"#fb8e8e" } }, "Error: " + e.message));
+        _toast("HF error: " + e.message, "error");
+      }).then(function() { btn.disabled = false; });
+    }
+
+    dlBtn.onclick = function() { _submitHF(false); };
+    metaOnlyBtn.onclick = function() {
+      if (!metaCb.checked && !prevCb.checked) {
+        statusLine.innerHTML = "<span style='color:#e88'>Enable at least one of metadata sidecar / preview image.</span>";
+        return;
+      }
+      _submitHF(true);
+    };
+
+    // File list on left
+    left.appendChild(el("label", { style: { marginTop:"8px" } }, "Files"));
+    var fl = el("div", { class: "cvt-files-list", style: { flex:"0 0 auto", marginTop:"4px" } });
+    files.forEach(function(f) {
+      var fn = f.rfilename || f.path || "";
+      var isWeight = /\.(safetensors|ckpt|pt|pth|gguf|bin)$/i.test(fn);
+      var row = el("div", { class: "f" });
+      row.appendChild(el("span", { style: { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 } }, fn));
+      var rightSpan = el("span", { style: { display:"inline-flex", gap:"4px", alignItems:"center", flexShrink:0 } });
+      rightSpan.appendChild(el("span", { style: { color:"var(--civ-text-mute)" } }, f.size ? _fmtBytes(f.size) : ""));
+      if (isWeight) {
+        var dlBtn2 = el("button", { class: "cvt-btn ghost", style: { padding:"2px 8px", fontSize:"10px" } }, "\u2B07");
+        dlBtn2.onclick = function() {
+          var name = fn.split("/").pop();
+          var sf = subIn.value || "";
+          var fldr = folderSel.value || "loras";
+          var seg = repoType === "dataset" ? "datasets/" : (repoType === "space" ? "spaces/" : "");
+          _startDl("https://huggingface.co/" + seg + repoId + "/resolve/main/" + encodeURIComponent(fn), name, fldr + (sf ? "/" + sf : ""));
+        };
+        rightSpan.appendChild(dlBtn2);
+      }
+      row.appendChild(rightSpan);
+      fl.appendChild(row);
+    });
+    left.appendChild(fl);
+  }).catch(function(e) { left.innerHTML = '<div class="cvt-empty">Error: ' + e.message + '</div>'; });
+}
+
+// ── 3. DOWNLOADS ────────────────────────────────────────────────────
+var _dlTimer = null;
+var _dlPolling = false;
+var _dlListEl = null;
+var _dlHeader = null;
+var _dlCountEl = null;
+var _dlRows = {};
+var _dlClearBtn = null;
+var _dlChips = {};
+var _dlSummaryEl = null;
+var _dlSummaryText = null;
+var _dlSummaryBar = null;
+var DL_FILTERS = [["all","All"],["active","Active"],["done","Done"],["failed","Failed"]];
+

@@ -1,0 +1,170 @@
+(pane) {
+  var s = el("div", { class: "cvt-settings" });
+
+  // API Keys
+  s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\uD83D\uDD11 API Keys"));
+
+  var apiGroup = el("div", { class: "group" });
+  var apiHeader = el("div", { class: "cvt-settings-row" });
+  apiHeader.appendChild(el("span", { class: "cvt-settings-label" }, "Civitai API Key"));
+  var apiBadge = el("span", { class: "cvt-settings-badge" }, "not set");
+  apiHeader.appendChild(apiBadge);
+  apiGroup.appendChild(apiHeader);
+  apiGroup.appendChild(el("div", { class: "cvt-settings-hint" }, "Required for private/gated models. Get one at civitai.com/user/account \u2192 API Keys. Starts with civitai_"));
+  var apiIn = el("input", { type: "password", placeholder: "Paste your Civitai API key\u2026", autocomplete: "off" });
+  apiGroup.appendChild(apiIn);
+  var apiBtns = el("div", { class: "cvt-settings-btns" });
+  var apiSaveBtn = el("button", { class: "cvt-btn cvt-btn-xs" }, "\uD83D\uDCBE Save");
+  var apiShowBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83D\uDC41");
+  var apiClearBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83D\uDDD1");
+  apiBtns.appendChild(apiSaveBtn); apiBtns.appendChild(apiShowBtn); apiBtns.appendChild(apiClearBtn);
+  apiGroup.appendChild(apiBtns);
+  var apiStatus = el("div", { class: "cvt-settings-status" });
+  apiGroup.appendChild(apiStatus);
+  s.appendChild(apiGroup);
+
+  var hfGroup = el("div", { class: "group" });
+  var hfHeader = el("div", { class: "cvt-settings-row" });
+  hfHeader.appendChild(el("span", { class: "cvt-settings-label" }, "\uD83E\uDD17 Hugging Face Token"));
+  var hfBadge = el("span", { class: "cvt-settings-badge" }, "not set");
+  hfHeader.appendChild(hfBadge);
+  hfGroup.appendChild(hfHeader);
+  hfGroup.appendChild(el("div", { class: "cvt-settings-hint" }, "For private/gated repos. Get one at huggingface.co/settings/tokens"));
+  var hfIn = el("input", { type: "password", placeholder: "Paste your HF token\u2026", autocomplete: "off" });
+  hfGroup.appendChild(hfIn);
+  var hfBtns = el("div", { class: "cvt-settings-btns" });
+  var hfSaveBtn = el("button", { class: "cvt-btn cvt-btn-xs" }, "\uD83D\uDCBE Save");
+  var hfShowBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83D\uDC41");
+  var hfClearBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83D\uDDD1");
+  hfBtns.appendChild(hfSaveBtn); hfBtns.appendChild(hfShowBtn); hfBtns.appendChild(hfClearBtn);
+  hfGroup.appendChild(hfBtns);
+  var hfStatus = el("div", { class: "cvt-settings-status" });
+  hfGroup.appendChild(hfStatus);
+  s.appendChild(hfGroup);
+
+  // Preferences
+  s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\u2699\uFE0F Preferences"));
+  var prefsGroup = el("div", { class: "group" });
+  var cbMeta = el("input", { type: "checkbox" });
+  var cbPrev = el("input", { type: "checkbox" });
+  var cbHash = el("input", { type: "checkbox" });
+  var cbNsfwBlur = el("input", { type: "checkbox" });
+  cbNsfwBlur.onchange = function() { window.__nsfwBlurEnabled = cbNsfwBlur.checked; };
+  var cbCompact = el("input", { type: "checkbox" });
+  cbCompact.onchange = function() { if (cbCompact.checked) S.root.classList.add("compact"); else S.root.classList.remove("compact"); };
+  [[cbMeta,"\uD83D\uDCC4 Save .civitai.json metadata alongside models"],
+   [cbPrev,"\uD83D\uDDBC\uFE0F Save preview images alongside models"],
+   [cbHash,"\uD83D\uDD10 Verify SHA256 hash after download"],
+   [cbNsfwBlur,"\uD83D\uDE48 Blur NSFW content in card grid and previews"],
+   [cbCompact,"\uD83D\uDCCA Compact grid mode (smaller cards, more columns)"]].forEach(function(item) {
+    prefsGroup.appendChild(el("label", { class: "cvt-settings-toggle" }, item[0], el("span", {}, item[1])));
+  });
+  s.appendChild(prefsGroup);
+
+  // Network
+  s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\uD83C\uDF10 Network"));
+  var netGroup = el("div", { class: "group" });
+  netGroup.appendChild(el("div", { class: "cvt-settings-row" }, el("span", { class: "cvt-settings-label" }, "Civitai API Domain"), el("span", { class: "cvt-settings-hint", style:{fontSize:"10px"} }, "Switch if main domain is blocked")));
+  var baseSel = el("select");
+  [{v:"civitai.com",l:"civitai.com (default)"},{v:"civitai.red",l:"civitai.red (mirror)"},{v:"civitai.work",l:"civitai.work (mirror)"}].forEach(function(b) { baseSel.appendChild(el("option", { value: b.v }, b.l)); });
+  netGroup.appendChild(baseSel);
+  s.appendChild(netGroup);
+
+  // Quick Actions
+  s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\u26A1 Quick Actions"));
+  var qaGroup = el("div", { class: "group" });
+  var qaGrid = el("div", { class: "cvt-settings-actions-grid" });
+  [["\uD83D\uDD04 Refresh Nodes","Reload all node model dropdowns",function(){try{var r=app.refreshComboInNodes&&app.refreshComboInNodes();Promise.resolve(r).then(function(){_toast("Nodes refreshed","ok")}).catch(function(e){_toast("Error: "+(e&&e.message||e),"error")});}catch(e){_toast("Error: "+e.message,"error")}}]].forEach(function(a){
+    var card = el("div",{class:"cvt-settings-action-card",onclick:a[2]});
+    card.appendChild(el("div",{class:"cvt-settings-action-title"},a[0]));
+    card.appendChild(el("div",{class:"cvt-settings-action-desc"},a[1]));
+    qaGrid.appendChild(card);
+  });
+  qaGroup.appendChild(qaGrid);
+  s.appendChild(qaGroup);
+
+  // Bottom buttons
+  var actionBar = el("div",{class:"cvt-settings-bottom"});
+  var saveBtn = el("button",{class:"cvt-btn"},"\u2714\uFE0F Save All Settings");
+  var testBtn = el("button",{class:"cvt-btn ghost"},"\uD83D\uDD0C Test Connection");
+  var clearCacheBtn = el("button",{class:"cvt-btn ghost"},"\uD83E\uDDF9 Clear Cache");
+  actionBar.appendChild(saveBtn); actionBar.appendChild(testBtn); actionBar.appendChild(clearCacheBtn);
+  s.appendChild(actionBar);
+  var sStatus = el("div",{class:"cvt-settings-status",style:{textAlign:"center",marginTop:"6px"}});
+  s.appendChild(sStatus);
+  pane.appendChild(s);
+
+  // Load settings
+  _api("/civitai/settings").then(function(cfg){
+    baseSel.value = (cfg.network_choice||"com")==="com"?"civitai.com":(cfg.network_choice==="work"?"civitai.work":"civitai.red");
+    cbMeta.checked = cfg.save_metadata!==false;
+    cbPrev.checked = cfg.save_preview!==false;
+    cbHash.checked = cfg.verify_sha256!==false;
+    cbNsfwBlur.checked = cfg.nsfw_blur!==false;
+    window.__nsfwBlurEnabled = cfg.nsfw_blur!==false;
+    cbCompact.checked = cfg.compact_grid===true;
+    if(cfg.has_api_key){apiBadge.className="cvt-settings-badge active";apiBadge.textContent="connected";}
+    if(cfg.has_token){hfBadge.className="cvt-settings-badge active";hfBadge.textContent="connected";}
+  }).catch(function(){});
+
+  apiShowBtn.onclick=function(){if(apiIn.type==="password"){apiIn.type="text";apiShowBtn.textContent="\uD83D\uDE48";}else{apiIn.type="password";apiShowBtn.textContent="\uD83D\uDC41";}};
+  hfShowBtn.onclick=function(){if(hfIn.type==="password"){hfIn.type="text";hfShowBtn.textContent="\uD83D\uDE48";}else{hfIn.type="password";hfShowBtn.textContent="\uD83D\uDC41";}};
+  apiSaveBtn.onclick=function(){var v=apiIn.value.trim();if(!v){apiStatus.innerHTML="<span style='color:#e88'>Paste a key first.</span>";return;}apiSaveBtn.disabled=true;apiStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_cache.del("/civitai/settings");_api("/civitai/settings",{method:"POST",body:JSON.stringify({api_key:v})}).then(function(r){apiIn.value="";if(r.has_api_key){apiBadge.className="cvt-settings-badge active";apiBadge.textContent="connected";}apiStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 API key saved</span>":"<span style='color:#cc9'>Key cleared</span>";}).catch(function(e){apiStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){apiSaveBtn.disabled=false;});};
+  apiClearBtn.onclick=function(){if(!confirm("Remove the saved Civitai API key?"))return;_api("/civitai/settings",{method:"POST",body:JSON.stringify({api_key:""})}).then(function(){apiIn.value="";apiBadge.className="cvt-settings-badge";apiBadge.textContent="not set";apiStatus.innerHTML="<span style='color:#cc9'>Key removed</span>";}).catch(function(e){apiStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";});};
+  apiIn.onkeydown=function(e){if(e.key==="Enter")apiSaveBtn.click();};
+  hfSaveBtn.onclick=function(){var v=hfIn.value.trim();if(!v){hfStatus.innerHTML="<span style='color:#e88'>Paste a token first.</span>";return;}hfSaveBtn.disabled=true;hfStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:v})}).then(function(r){hfIn.value="";if(r.has_token){hfBadge.className="cvt-settings-badge active";hfBadge.textContent="connected";}hfStatus.innerHTML=r.has_token?"<span style='color:#6d6'>\u2713 Token saved</span>":"<span style='color:#cc9'>Token cleared</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){hfSaveBtn.disabled=false;});};
+  hfClearBtn.onclick=function(){if(!confirm("Remove the saved HF token?"))return;_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:""})}).then(function(){hfIn.value="";hfBadge.className="cvt-settings-badge";hfBadge.textContent="not set";hfStatus.innerHTML="<span style='color:#cc9'>Token removed</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";});};
+  hfIn.onkeydown=function(e){if(e.key==="Enter")hfSaveBtn.click();};
+  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,compact_grid:cbCompact.checked,theme:S.root.classList.contains("light")?"light":"dark"};S.settings.saveMeta=cbMeta.checked;S.settings.savePrev=cbPrev.checked;S.settings.verifySha=cbHash.checked;S.settings.nsfwBlur=cbNsfwBlur.checked;_cache.del("/civitai/settings");_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
+  testBtn.onclick=function(){testBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Testing\u2026</span>";_api("/civitai/ping").then(function(r){sStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 Connected \u2014 API key recognised</span>":"<span style='color:#cc9'>Connected \u2014 no API key (public only)</span>";}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>\u2717 Failed: "+e.message+"</span>";}).then(function(){testBtn.disabled=false;});};
+  clearCacheBtn.onclick=function(){clearCacheBtn.disabled=true;_api("/civitai/cache/clear",{method:"POST"}).then(function(r){_cache.clear();_toast("Cache cleared");sStatus.innerHTML="<span style='color:#6d6'>\u2713 Cache cleared</span>";}).catch(function(e){_toast("Clear failed: "+e.message,"error");}).then(function(){clearCacheBtn.disabled=false;});};
+}
+
+// ── 6. MOUNT ─────────────────────────────────────────────────────────
+try {
+app.registerExtension({
+  name: "CivitaiHF.Browser",
+  setup: function() {
+    (function tryMount() {
+      if (app.extensionManager && app.extensionManager.registerSidebarTab) {
+        app.extensionManager.registerSidebarTab({
+          id: "civitai-hf",
+          icon: "pi pi-globe",
+          title: "Civitai+HF",
+          tooltip: "Civitai & Hugging Face Downloader",
+          type: "custom",
+          render: function(root) {
+            root.innerHTML = "";
+            try {
+              root.appendChild(buildUI());
+            } catch(e) {
+              console.error("[CivitaiHF] buildUI error:", e);
+              root.innerHTML = "<div style='color:#f88;padding:20px;font-size:12px;'>Extension error: " + e.message + "<br>Check browser console (F12) for details.</div>";
+            }
+          },
+        });
+        return true;
+      }
+      return false;
+    })() || setTimeout(function() {
+      (function tryMount() {
+        if (app.extensionManager && app.extensionManager.registerSidebarTab) {
+          app.extensionManager.registerSidebarTab({
+            id: "civitai-hf",
+            icon: "pi pi-globe",
+            title: "Civitai+HF",
+            tooltip: "Civitai & Hugging Face Downloader",
+            type: "custom",
+            render: function(root) {
+              root.innerHTML = "";
+              root.appendChild(buildUI());
+            },
+          });
+          return true;
+        }
+        return false;
+      })();
+    }, 2000);
+  },
+});
+} catch(initErr) { console.error("[CivitaiHF] Init error:", initErr); }

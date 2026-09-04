@@ -732,8 +732,8 @@ function _lookupCivitai(raw, fieldEl) {
 function _card(m) {
   var imgs = m.images || (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].images) || [];
   var firstImg = imgs[0];
-  var anyFlags = { hasPG13:true, hasR:true, hasX:true, hasXXX:true };
-  var isNsfw = _matchNsfw(m, anyFlags) || (firstImg && _matchNsfw(firstImg, anyFlags));
+  var deepNsfwFlags = { hasX:true, hasXXX:true }; // Only X/XXX considered NSFW for blur/class
+  var isNsfw = _matchNsfw(m, deepNsfwFlags) || (firstImg && _matchNsfw(firstImg, deepNsfwFlags));
   var imgUrl = firstImg ? (typeof firstImg === "string" ? firstImg : firstImg.url || "") : "";
   var card = el("div", { class: "cvt-card", style: { position:"relative" } });
   // Bookmark button (top-right of card)

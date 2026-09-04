@@ -1,0 +1,49 @@
+(pane) {
+  pane.innerHTML = "";
+  pane.appendChild(el("h2", { style: { fontSize:"14px", marginBottom:"6px" } }, "\u2B50 Bookmarks"));
+  var listEl = el("div");
+  pane.appendChild(listEl);
+  _api("/civitai/bookmarks").then(function(d) {
+    var items = d.items || d || [];
+    if (!items.length) {
+      listEl.appendChild(el("div", { class: "cvt-empty" }, "No bookmarks yet. Click \u2605 on any model card to save it here."));
+      return;
+    }
+    items.forEach(function(b) {
+      var row = el("div", { class: "cvt-row", style: { padding:"6px 0", borderBottom:"1px solid var(--civ-line)", display:"flex", alignItems:"center", gap:"8px" } });
+      var info = el("div", { style: { flex:"1" } });
+      info.appendChild(el("div", { style: { fontWeight:600, fontSize:"12px" } }, b.name || "Bookmark"));
+      info.appendChild(el("div", { style: { fontSize:"10px", color:"var(--civ-text-dim)" } },
+        (b.source || "") + (b.type ? " \u00B7 " + b.type : "") + (b.filename ? " \u00B7 " + b.filename : "")));
+      row.appendChild(info);
+      var btnRow = el("div", { style: { display:"flex", gap:"6px" } });
+      var dlBtn = el("button", { class: "cvt-btn cvt-btn-xs" }, "\u2B07 Download");
+      dlBtn.onclick = function() {
+        var body = {
+          model_version_id: b.model_version_id || b.id,
+          save_as: (b.type === "Checkpoint" ? "checkpoints" : (b.type === "LORA" || b.type === "LoCon" ? "loras" : b.type === "VAE" ? "vae" : b.type === "Controlnet" ? "controlnet" : b.type === "TextualInversion" ? "embeddings" : b.type === "Hypernetwork" ? "hypernetworks" : b.type === "Upscaler" ? "upscale_models" : "other")),
+          filename: b.filename || b.name || "model.safetensors",
+          subfolder: b.subfolder || "",
+          overwrite: false,
+          save_metadata: true, save_preview: true
+        };
+        _api("/civitai/download", { method:"POST", body: JSON.stringify(body) }).then(function() {
+          _toast("Queued: " + (b.filename || b.name || ""), "ok");
+        }).catch(function(e) { _toast("Download error: " + e.message, "error"); });
+      };
+      var delBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\u2715");
+      delBtn.onclick = function() {
+        _api("/civitai/bookmarks-delete", { method:"POST", body: JSON.stringify({ id: b.model_version_id || b.id }) }).then(function() {
+          renderBookmarks(pane);
+          _toast("Bookmark removed", "ok");
+        }).catch(function(e) { _toast("Delete error: " + e.message, "error"); });
+      };
+      btnRow.appendChild(dlBtn); btnRow.appendChild(delBtn);
+      row.appendChild(btnRow);
+      listEl.appendChild(row);
+    });
+  }).catch(function(e) {
+    listEl.innerHTML = '<div class="cvt-empty">Failed to load bookmarks: ' + e.message + '</div>';
+  });
+}
+
