@@ -3,3 +3,5 @@ __pycache__/
 data/
 .env
 .preview_cache/
+__pycache__/
+*.pyc
