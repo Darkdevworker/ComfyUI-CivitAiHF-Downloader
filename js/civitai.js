@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { installSidebarLogo, makeLogo } from "./logo.js";
+import { installSidebarLogo, makeLogo, TAB_LOGOS } from "./logo.js";
 import {
   CONTENT_BANDS, BAND_ORDER, parseBandSelection, needsNsfwQuery,
   bandIdOfModel, bandIdOfImage, bandOfModel, filterByBands,
@@ -183,8 +183,8 @@ function _toast(msg, type) {
 
 
 const TABS = [
-  // the emoji is only a fallback: buildUI() paints the real Civitai "C"
-  // logo for the civitai tab (see js/logo.js)
+  // emojis below are only fallbacks: buildUI() paints the real mark for
+  // any tab listed in TAB_LOGOS (see js/logo.js)
   ["civitai", "Civitai", "\uD83C\uDDE8", "emoji-float"],
   ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
   ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
@@ -208,10 +208,11 @@ function buildUI() {
   var panes = {};
   TABS.forEach(function(t) {
     var id = t[0], label = t[1], icon = t[2], anim = t[3];
-    // The Civitai tab uses the real "C" mark instead of the 🇨 "C box" glyph
+    // Tabs listed in TAB_LOGOS get their real mark instead of an emoji
+    // (Civitai = the "C" logo, Downloads = the green arrow).
     var emojiSpan;
-    if (id === "civitai") {
-      emojiSpan = makeLogo(14, "Civitai");
+    if (TAB_LOGOS[id]) {
+      emojiSpan = makeLogo(14, label, id);
       emojiSpan.classList.add("tab-emoji");
     } else {
       emojiSpan = el("span", { class: "tab-emoji" }, icon);

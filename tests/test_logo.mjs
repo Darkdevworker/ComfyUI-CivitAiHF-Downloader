@@ -62,7 +62,9 @@ global.document = {
 };
 global.window = {};
 
-const { CIVITAI_LOGO_PNG, installSidebarLogo, makeLogo } = await import("../js/logo.js");
+const {
+  CIVITAI_LOGO_PNG, DOWNLOADS_LOGO_PNG, TAB_LOGOS, installSidebarLogo, makeLogo,
+} = await import("../js/logo.js");
 
 let pass = 0, fail = 0;
 function eq(actual, expected, label) {
@@ -93,6 +95,15 @@ const legacyOther = sidebarButton(null, "Workflows");
 installSidebarLogo("civitai-hf", "Civitai");
 eq(legacy.classList.contains("cvt-sidebar-tab"), true, "matched by aria-label");
 eq(legacyOther.classList.contains("cvt-sidebar-tab"), false, "other legacy tabs untouched");
+
+console.log("tab logo map");
+ok(DOWNLOADS_LOGO_PNG.startsWith("data:image/png;base64,"), "downloads icon is an inline PNG");
+eq(Object.keys(TAB_LOGOS).sort(), ["civitai", "downloads"], "civitai + downloads have image marks");
+eq(TAB_LOGOS.civitai, CIVITAI_LOGO_PNG, "civitai maps to the C logo");
+eq(TAB_LOGOS.downloads, DOWNLOADS_LOGO_PNG, "downloads maps to the green arrow");
+eq(TAB_LOGOS.hf, undefined, "HF keeps its emoji");
+eq(TAB_LOGOS.local, undefined, "Local keeps its emoji");
+eq(TAB_LOGOS.settings, undefined, "Settings keeps its emoji");
 
 console.log("makeLogo");
 const img = makeLogo(18, "Civitai");

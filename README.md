@@ -172,7 +172,7 @@ clip              detection         frame_interpolation latent_upscale_models  p
 | `utils.py` | Database manager, Civitai/HF API utilities, hash computation, model scanning |
 | `js/civitai.js` | Full sidebar UI (tabs, modals, lightbox, downloads, settings, keyboard nav, animations) |
 | `js/rating.js` | Content-band definitions (PG / PG-13 / R / X / XXX), rating normalisation, blur + filter helpers |
-| `js/logo.js` | The Civitai “C” mark as a data URI + `installSidebarLogo()`, which paints it onto the sidebar tab |
+| `js/logo.js` | Tab marks (Civitai “C”, green download arrow) as data URIs, `installSidebarLogo()` for the sidebar tab, and `TAB_LOGOS` — the list of tabs that use an image instead of an emoji |
 | `js/civitai.css` | Dark/Light theme with animations, glassmorphism, responsive layout |
 
 ---
