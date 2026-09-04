@@ -183,6 +183,8 @@ function _toast(msg, type) {
 
 
 const TABS = [
+  // the emoji is only a fallback: buildUI() paints the real Civitai "C"
+  // logo for the civitai tab (see js/logo.js)
   ["civitai", "Civitai", "\uD83C\uDDE8", "emoji-float"],
   ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
   ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
@@ -206,7 +208,14 @@ function buildUI() {
   var panes = {};
   TABS.forEach(function(t) {
     var id = t[0], label = t[1], icon = t[2], anim = t[3];
-    var emojiSpan = el("span", { class: "tab-emoji" }, icon);
+    // The Civitai tab uses the real "C" mark instead of the 🇨 "C box" glyph
+    var emojiSpan;
+    if (id === "civitai") {
+      emojiSpan = makeLogo(14, "Civitai");
+      emojiSpan.classList.add("tab-emoji");
+    } else {
+      emojiSpan = el("span", { class: "tab-emoji" }, icon);
+    }
     var btn = el("button", { class: "cvt-tab" + (id === "civitai" ? " active" : ""), dataset: { tab: id } },
       emojiSpan, " ", label);
     // Only the active tab animates (UX guideline: avoid excessive motion)
@@ -219,14 +228,6 @@ function buildUI() {
     root.appendChild(pane);
   });
   root.insertBefore(tabBar, root.firstChild);
-
-  // Branded header: [Civitai "C" logo] Civitai / + Hugging Face
-  var header = el("div", { class: "cvt-header" },
-    makeLogo(28),
-    el("div", { class: "cvt-header-text" },
-      el("div", { class: "cvt-header-title" }, "Civitai"),
-      el("div", { class: "cvt-header-sub" }, "+ Hugging Face")));
-  root.insertBefore(header, tabBar);
   // Re-blur everything already on screen (cards, gallery, lightbox) when the
   // blur setting changes. We deliberately do NOT re-render the tab: that would
   // rebuild the Settings form you are editing and drop the current results.
