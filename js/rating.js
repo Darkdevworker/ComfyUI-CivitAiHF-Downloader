@@ -1,4 +1,7 @@
-// Content rating system: PG / PG-13 / R / X / XXX
+/**
+ * Civitai Content Bands Definition
+ * Represents the 5 strict tiers for models, LoRAs, and user-generated showcase images.
+ */
 const NSFW_RATINGS = [
   { label: "PG", value: "" },
   { label: "PG13", value: "Soft" },
@@ -6,6 +9,57 @@ const NSFW_RATINGS = [
   { label: "X", value: "X" },
   { label: "XXX", value: "XXX" },
 ];
+
+const civitaiContentBands = [
+  {
+    rating: "PG",
+    label: "Safe for Work",
+    description: "Standard, universally safe content. Completely Safe For Work (SFW) with absolutely zero adult material.",
+    isSfw: true,
+    color: "#4CAF50"
+  },
+  {
+    rating: "PG-13",
+    label: "Lightly Risqué",
+    description: "Focuses on revealing clothing (e.g., short skirts, navels, cleavage), sexy attire, light action violence, or mild blood/gore.",
+    isSfw: true,
+    color: "#FF9800"
+  },
+  {
+    rating: "R",
+    label: "Risqué / Mature",
+    description: "Features adult themes, partial nudity (e.g., bikinis, underwear, leotards), sensual but non-explicit situations, and graphic violence.",
+    isSfw: false,
+    color: "#F44336"
+  },
+  {
+    rating: "X",
+    label: "Graphic Nudity",
+    description: "Fully Not Safe For Work (NSFW). Explicit graphic nudity, clear anatomy, and adult objects or settings without depicting full sexual acts.",
+    isSfw: false,
+    color: "#9C27B0"
+  },
+  {
+    rating: "XXX",
+    label: "Overtly Sexual",
+    description: "Explicit sexual acts, highly graphic presentation, or deeply disturbing concepts.",
+    isSfw: false,
+    color: "#000000"
+  }
+];
+
+function getContentBand(rating) {
+  if (!rating) return civitaiContentBands[0];
+  return civitaiContentBands.find(band => band.rating === String(rating).toUpperCase()) || civitaiContentBands[0];
+}
+
+function isValidRating(rating) {
+  return civitaiContentBands.some(band => band.rating === String(rating).toUpperCase());
+}
+
+function filterBandsBySfw(sfwOnly = true) {
+  return civitaiContentBands.filter(band => band.isSfw === sfwOnly);
+}
 
 function _buildRatingCheckboxes(selectedStr, onChange) {
   var selected = selectedStr ? selectedStr.split(",").filter(Boolean) : [];
@@ -47,7 +101,6 @@ function _nsfwFlags(val) {
 
 function _matchNsfw(item, flags) {
   if (!item) return false;
-  // Removed blanket boolean check — evaluate actual tier
   var lvl = item.nsfwLevel != null ? item.nsfwLevel : item.rating;
   if (lvl == null || lvl === "" || lvl === "null" || lvl === "undefined") {
     return item.nsfw !== false;
