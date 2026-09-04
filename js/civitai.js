@@ -203,7 +203,6 @@ function buildUI() {
   });
 
   var tabBar = el("div", { class: "cvt-tabs" });
-  tabBar.appendChild(makeLogo(16));   // Civitai "C" mark (assets/civitai-icon.png)
   var panes = {};
   TABS.forEach(function(t) {
     var id = t[0], label = t[1], icon = t[2], anim = t[3];
@@ -220,6 +219,14 @@ function buildUI() {
     root.appendChild(pane);
   });
   root.insertBefore(tabBar, root.firstChild);
+
+  // Branded header: [Civitai "C" logo] Civitai / + Hugging Face
+  var header = el("div", { class: "cvt-header" },
+    makeLogo(28),
+    el("div", { class: "cvt-header-text" },
+      el("div", { class: "cvt-header-title" }, "Civitai"),
+      el("div", { class: "cvt-header-sub" }, "+ Hugging Face")));
+  root.insertBefore(header, tabBar);
   // Re-blur everything already on screen (cards, gallery, lightbox) when the
   // blur setting changes. We deliberately do NOT re-render the tab: that would
   // rebuild the Settings form you are editing and drop the current results.

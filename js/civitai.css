@@ -1270,3 +1270,28 @@ img.nsfw:hover { filter: none; }
 /* Logo shown inside the panel (built by makeLogo() in js/logo.js) */
 .cvt-logo { image-rendering: auto; opacity: .95; }
 .cvt-tabs .cvt-logo { margin-right: 6px; }
+
+/* ══ Branded panel header — [C logo] Civitai / + Hugging Face ════════ */
+
+.cvt-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 44px 8px 12px;          /* right pad clears the theme toggle */
+  flex-shrink: 0; position: relative; z-index: 4;
+  background: linear-gradient(180deg, rgba(0,0,0,.92), rgba(0,0,0,.45));
+}
+.cvt-header-logo,
+.cvt-header .cvt-logo { width: 28px; height: 28px; display: block; flex-shrink: 0; }
+.cvt-header-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cvt-header-title {
+  font-size: 15px; font-weight: 700; line-height: 1.1;
+  letter-spacing: .2px; color: var(--civ-text);
+}
+.cvt-header-sub {
+  font-size: 9px; line-height: 1.1; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--civ-text-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cvt-root.compact .cvt-header { padding: 6px 44px 5px 10px; gap: 7px; }
+.cvt-root.compact .cvt-header .cvt-logo { width: 20px; height: 20px; }
+.cvt-root.compact .cvt-header-title { font-size: 13px; }
+.cvt-root.light .cvt-header { background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.60)); }
