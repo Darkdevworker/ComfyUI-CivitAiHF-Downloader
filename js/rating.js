@@ -103,23 +103,48 @@ function _matchNsfw(item, flags) {
   if (!item) return false;
   var lvl = item.nsfwLevel != null ? item.nsfwLevel : item.rating;
   if (lvl == null || lvl === "" || lvl === "null" || lvl === "undefined") {
-    return item.nsfw !== false;
+    // When a tier filter is selected, exclude unknown-rated items
+    return !(flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX) ? true : false;
   }
   var n = Number(lvl);
   if (!isNaN(n)) {
-    if (n <= 0 || n === 0) return false;
-    if (n <= 1) return flags.hasPG13;
-    if (n <= 2) return flags.hasR;
-    return flags.hasX || flags.hasXXX;
+    if (n <= 0 || n === 0) {
+      // PG-rated: included when no filter or when PG/PG-13 selected (inclusive downward)
+      return !flags.hasR && !flags.hasX && !flags.hasXXX;
+    }
+    if (n <= 1) {
+      // PG-13 / Soft: included when PG-13 or R or X selected (inclusive downward)
+      return !flags.hasR ? true : (flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX ? true : false);
+    }
+    // Actually make inclusive: include if selected tier covers this number
+    // PG-13 (1) selected -> include PG (0) and PG-13 (1)
+    // R (2) selected -> include PG (0), PG-13 (1), R (2)
+    // X/XXX (3+) selected -> include anything at or below
+    if (n <= 2) {
+      return flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX ? true : false;
+    }
+    // X / XXX (3+)
+    return flags.hasX || flags.hasXXX ? true : false;
   }
   var s = String(lvl).toLowerCase().trim();
-  if (s === "none" || s === "pg" || s === "g" || s === "everyone") return false;
-  if (s === "soft" || s === "pg13" || s === "pg-13" || s === "teen") return flags.hasPG13;
-  if (s === "mature" || s === "r" || s === "r15" || s === "adult") return flags.hasR;
-  if (s === "x" || s === "xxx" || s === "r18" || s === "r-18" || s === "r18+" || s === "explicit" || s === "nsfw") {
-    return flags.hasX || flags.hasXXX;
+  // PG / safe tiers: include when PG or PG-13 selected
+  if (s === "none" || s === "pg" || s === "g" || s === "everyone" || s === "0") {
+    return !(flags.hasR || flags.hasX || flags.hasXXX);
   }
-  return true;
+  // PG-13 / Soft
+  if (s === "soft" || s === "pg13" || s === "pg-13" || s === "teen") {
+    return !(flags.hasR || flags.hasX || flags.hasXXX) ? true : (flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX);
+  }
+  // R / Mature
+  if (s === "mature" || s === "r" || s === "r15" || s === "adult") {
+    return flags.hasR || flags.hasX || flags.hasXXX ? true : false;
+  }
+  // X / XXX / Explicit
+  if (s === "x" || s === "xxx" || s === "r18" || s === "r-18" || s === "r18+" || s === "explicit" || s === "nsfw") {
+    return flags.hasX || flags.hasXXX ? true : false;
+  }
+  // Unknown string with filter active: exclude to be safe
+  return false;
 }
 
 function getTierLabel(m) {
