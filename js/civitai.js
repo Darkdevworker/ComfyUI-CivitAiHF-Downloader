@@ -2488,3 +2488,5 @@ app.registerExtension({
   },
 });
 } catch(initErr) { console.error("[CivitaiHF] Init error:", initErr); }
+// Import content rating module
+// Rating logic handled by rating.js (PG / PG-13 / R / X / XXX)
