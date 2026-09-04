@@ -127,6 +127,11 @@ def add(payload):
         return True, "", entry["id"]
 
 
+# Printed once at import — if this line is missing from the ComfyUI startup log,
+# the old bookmark code is still loaded (restart ComfyUI after pulling).
+print("[CivitAiHF-Downloader] bookmarks store v2 — per-source identity (hf:<repo> / civitai:<version>)")
+
+
 def remove(payload):
     """Delete the bookmark matching this payload. Returns (removed, count_left)."""
     with _LOCK:

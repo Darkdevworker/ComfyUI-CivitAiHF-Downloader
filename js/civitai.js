@@ -8,6 +8,11 @@ import {
   applyBlur, reapplyBlur, isBlurred, DEFAULT_BLUR_THRESHOLD,
 } from "./rating.js";
 
+// Bumped whenever the panel UI changes. If the browser console does not show
+// this line, ComfyUI is still serving a cached copy of this file — hard-refresh.
+var UI_BUILD = "2026-09-04.1 (bookmark cards)";
+console.log("[CivitAiHF-Downloader] UI build " + UI_BUILD);
+
 // Convenience wrapper: rating.bandMatches() bound to a selection array
 function bandMatchesSelection(bandId, selectedIds) {
   if (!selectedIds || !selectedIds.length) return true;
