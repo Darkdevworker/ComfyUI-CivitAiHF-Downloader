@@ -248,7 +248,7 @@ function _toast(msg, type) {
 
 
 const TABS = [
-  ["civitai", "Civitai", "<img src='assets/civitai-icon.png' style='width:16px;height:16px;vertical-align:middle;margin-right:4px;'>", "emoji-float"],
+  ["civitai", "Civitai", "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y+mAAAA0lBMVEVHcEwOTtoOWOMRePEMU9wKKcwPde8Qbe4NTNsNUN0MRNkOUuALK8wLL88OYuULNdIQa+sMQtgPY+cLLc4KKc0KL80Rd/AQcO4LKMsRd/IQePERd/H/Cv8JMdT///8IBnQLMdIMONUKKcwRevMQc/AXDV4WBE4QZ+kSDmkMQNgSHYYNTN4MAVcOV+MGAWWfnsBZWI4PYegQE3cOQcEON8APWdYfGGcPS8rr6/P39vsQI59HQnmQjbCtq8cPL6rY1+VQTYUsKnW4uNZqZ5XPzt6BfaEkLtneAAAAHXRSTlMAE8nYCpNS/h4myd5p4zPQy97gve9DmrRVc4HomiyOrWcAAAGASURBVCiRbZKJcoIwFEW1Cmrr1rrrCApNDCESdhRxt///S82Le+uZIcs7czPJ8HK5B4qDYTH3mrxaMM2Cmn+himrXlPTUf+l6d2ReGHXrz7FB4VtgRpEJc2H4cLbaLEFtFlAazGBVaqoXVemVJAn1dd2nyXnXk2eXmzMgSnVdpxSGSBa+KlcZbUTVdw8HF/Qm8q7yzfMiKO34QtOW3JVhz7vJxNf32VaTbPle95ObnM8T39mJ2IJDWHMdP/DmHw/SXWqnIyFuxvlKyPmDJCDXsUMcIrlL2w6u0nFIHBNEAts+y3eQTMjtMY6PfH1YMRI+S7jQcs2XcCEpP8/SskLE4p/T+SmnbM9QaFs3GRDM2CqD12QrxjAKrbu0QopB8/UOMYx94S6yMQU2BGOMYhg2slCryCZoyc00RRhUOpG7RufyR6uNiWBsUISoMYZ1o3pvpLxSkzpNYZrUlMpTF3WUtmEYY/EZbaWT+0Ox3zIkrf6rzs1XayJWLb9QMq0oT6lflJRMdFCdelwAAAAASUVORK5CYII=\" style=\"width:16px;height:16px;vertical-align:middle;margin-right:4px;\">", "emoji-float"],
   ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
   ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
   ["local", "Local", "\uD83D\uDCC1", "emoji-wiggle"],
