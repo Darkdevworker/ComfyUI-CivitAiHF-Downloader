@@ -248,7 +248,7 @@ function _toast(msg, type) {
 
 
 const TABS = [
-  ["civitai", "Civitai", "\uD83C\uDDE8", "emoji-float"],
+  ["civitai", "Civitai", "<img src='assets/civitai-icon.png' style='width:16px;height:16px;vertical-align:middle;margin-right:4px;'>", "emoji-float"],
   ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
   ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
   ["local", "Local", "\uD83D\uDCC1", "emoji-wiggle"],
