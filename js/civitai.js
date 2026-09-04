@@ -4,7 +4,7 @@ import {
   CONTENT_BANDS, BAND_ORDER, parseBandSelection, needsNsfwQuery,
   bandIdOfModel, bandIdOfImage, bandOfModel, filterByBands,
   makeBandBadge, buildBandCheckboxes, buildBlurThresholdSelect,
-  applyBlur, isBlurred, DEFAULT_BLUR_THRESHOLD,
+  applyBlur, reapplyBlur, isBlurred, DEFAULT_BLUR_THRESHOLD,
 } from "./rating.js";
 
 // Convenience wrapper: rating.bandMatches() bound to a selection array
@@ -218,13 +218,11 @@ function buildUI() {
     root.appendChild(pane);
   });
   root.insertBefore(tabBar, root.firstChild);
-  // Re-render the visible tab — used when the blur threshold changes so the
-  // new setting applies to cards that are already on screen.
-  window.__cvtRefreshTab = function() {
-    var pane = panes[S.curTab];
-    if (!pane) return;
-    pane._rendered = false;
-    _switchTab(S.curTab, tabBar, panes);
+  // Re-blur everything already on screen (cards, gallery, lightbox) when the
+  // blur setting changes. We deliberately do NOT re-render the tab: that would
+  // rebuild the Settings form you are editing and drop the current results.
+  window.__cvtReapplyBlur = function() {
+    reapplyBlur(document);
   };
   renderBrowse(panes.civitai); panes.civitai._rendered = true;
   // Theme toggle button
@@ -443,6 +441,7 @@ document.addEventListener("keydown", function(e) { if (e.key === "Escape") { clo
 
 // ── 1. BROWSE ────────────────────────────────────────────────────────
 function renderBrowse(pane) {
+  pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
   var sb = el("div", { class: "cvt-searchbar" });
 
   // ---- Manual entry row (lookup by ID / URL / hash) ----
@@ -1392,6 +1391,7 @@ function _startDl(url, name, subfolder) {
 
 // ── 2. HUGGING FACE ─────────────────────────────────────────────────
 function renderHF(pane) {
+  pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
   var sb = el("div", { class: "cvt-searchbar" });
 
   // ---- Manual entry row (repo URL / ID) ----
@@ -1723,6 +1723,7 @@ var _dlSummaryBar = null;
 var DL_FILTERS = [["all","All"],["active","Active"],["done","Done"],["failed","Failed"]];
 
 function renderDownloads(pane) {
+  pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
   _dlListEl = null;
   _dlRows = {};
 
@@ -2253,6 +2254,7 @@ function _localCard(m, grid, filterIn) {
 
 // ── 5. SETTINGS ────────────────────────────────────────────────
 function renderSettings(pane) {
+  pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
   var s = el("div", { class: "cvt-settings" });
 
   // API Keys
@@ -2305,13 +2307,13 @@ function renderSettings(pane) {
   var cbNsfwBlur = el("input", { type: "checkbox" });
   cbNsfwBlur.onchange = function() {
     window.__nsfwBlurEnabled = cbNsfwBlur.checked;
-    if (typeof window.__cvtRefreshTab === "function") window.__cvtRefreshTab();
+    if (typeof window.__cvtReapplyBlur === "function") window.__cvtReapplyBlur();
   };
   // Which bands get blurred — Off / R+ / X+ (default) / XXX
   var blurSel = buildBlurThresholdSelect(window.__nsfwBlurLevel || DEFAULT_BLUR_THRESHOLD);
   blurSel.onchange = function() {
     window.__nsfwBlurLevel = blurSel.value;
-    if (typeof window.__cvtRefreshTab === "function") window.__cvtRefreshTab();
+    if (typeof window.__cvtReapplyBlur === "function") window.__cvtReapplyBlur();
   };
   var cbCompact = el("input", { type: "checkbox" });
   cbCompact.onchange = function() { if (cbCompact.checked) S.root.classList.add("compact"); else S.root.classList.remove("compact"); };

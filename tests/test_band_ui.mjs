@@ -3,9 +3,11 @@
  * Run with:  node tests/test_band_ui.mjs
  * Uses a tiny DOM stub so it runs anywhere — no jsdom needed.
  */
+const registry = [];   // every stub node, so querySelectorAll can find them
+
 function makeEl(tag) {
   const classes = new Set();
-  return {
+  const node = {
     tagName: (tag || "").toUpperCase(),
     children: [], style: {}, dataset: {}, title: "", textContent: "", className: "",
     classList: {
@@ -17,15 +19,22 @@ function makeEl(tag) {
     _classes: classes,
     appendChild(c) { this.children.push(c); return c; },
   };
+  registry.push(node);
+  return node;
 }
 global.document = {
   createElement: makeEl,
   createTextNode: (t) => ({ nodeType: 3, textContent: String(t) }),
+  querySelectorAll(sel) {
+    if (sel !== "[data-cvt-band]") return [];
+    return registry.filter((n) => n.dataset.cvtBand != null);
+  },
 };
 global.window = { __nsfwBlurEnabled: true, __nsfwBlurLevel: "X" };
 
 const {
-  makeBandBadge, buildBandCheckboxes, buildBlurThresholdSelect, applyBlur, parseBandSelection,
+  makeBandBadge, buildBandCheckboxes, buildBlurThresholdSelect, applyBlur, reapplyBlur,
+  parseBandSelection, isBlurred,
 } = await import("../js/rating.js");
 
 let pass = 0, fail = 0;
@@ -73,6 +82,28 @@ window.__nsfwBlurLevel = "X";
 const offThumb = makeEl("div");
 window.__nsfwBlurLevel = "off";
 eq(applyBlur(offThumb, "XXX"), false, "threshold off never blurs");
+window.__nsfwBlurLevel = "X";
+window.__nsfwBlurEnabled = false;
+eq(isBlurred("XXX"), false, "master switch disables blur");
+window.__nsfwBlurEnabled = true;
+
+console.log("re-blur without re-rendering (settings dropdown change)");
+const card = makeEl("div");
+applyBlur(card, "XXX");
+eq(card.dataset.cvtBand, "XXX", "band is remembered on the node");
+eq(card.classList.contains("cvt-blur"), true, "XXX blurred at threshold X");
+window.__nsfwBlurLevel = "off";
+eq(reapplyBlur(document) > 0, true, "reapplyBlur finds rendered nodes");
+eq(card.classList.contains("cvt-blur"), false, "threshold off -> card un-blurred");
+eq(card.dataset.cvtBand, "XXX", "band still remembered while visible");
+window.__nsfwBlurLevel = "X";
+reapplyBlur(document);
+eq(card.classList.contains("cvt-blur"), true, "raising the threshold re-blurs the same card");
+const pgCard = makeEl("div");
+applyBlur(pgCard, "PG");
+window.__nsfwBlurLevel = "R";
+reapplyBlur(document);
+eq(pgCard.classList.contains("cvt-blur"), false, "PG stays visible at threshold R");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

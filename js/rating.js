@@ -340,16 +340,30 @@ export function applyBlur(node, bandId, opts) {
   if (!node) return false;
   opts = opts || {};
   var on = isBlurred(bandId, opts.threshold);
+  // Always remember the band, even when it is not blurred right now — that way
+  // raising the threshold later can re-blur nodes already in the DOM.
+  node.dataset.cvtBand = bandId;
   if (on) {
     node.classList.add(BLUR_CLASS);
-    node.dataset.cvtBand = bandId;
     node.title = bandId + " — hover to reveal";
   } else {
     node.classList.remove(BLUR_CLASS);
-    delete node.dataset.cvtBand;
     if (node.title === bandId + " — hover to reveal") node.title = "";
   }
   return on;
+}
+
+/**
+ * Re-apply the blur to every node already rendered (cards, gallery thumbs,
+ * lightbox image) after the threshold changes — no re-render, no lost state.
+ */
+export function reapplyBlur(root) {
+  var scope = root || document;
+  var nodes = scope.querySelectorAll("[data-cvt-band]");
+  for (var i = 0; i < nodes.length; i++) {
+    applyBlur(nodes[i], nodes[i].dataset.cvtBand);
+  }
+  return nodes.length;
 }
 
 /* ── UI helpers ─────────────────────────────────────────────────────── */
