@@ -742,6 +742,17 @@ function _card(m) {
     }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
   };
   card.appendChild(bookmarkBtn);
+  // Category badge from 5-tier content bands (PG / PG-13 / R / X / XXX)
+  var ratingVal = m.nsfwLevel || m.rating || m.nsfw || "";
+  var ratingStr = String(ratingVal).toLowerCase().trim();
+  var tierLabel = "PG"; // default safe tier
+  if (ratingStr === "soft" || ratingStr === "pg13" || ratingStr === "pg-13" || ratingStr === "teen") tierLabel = "PG-13";
+  else if (ratingStr === "mature" || ratingStr === "r" || ratingStr === "r15" || ratingStr === "adult") tierLabel = "R";
+  else if (ratingStr === "x" || ratingStr === "r18" || ratingStr === "r-18" || ratingStr === "explicit" || ratingStr === "nsfw") tierLabel = (ratingStr === "x" || ratingStr === "r18" || ratingStr === "r-18") ? "X" : "XXX"; // XXX for deepest explicit
+  else if (ratingStr !== "" && ratingStr !== "none" && ratingStr !== "pg" && ratingStr !== "g" && ratingStr !== "everyone") tierLabel = "X"; // unknown explicit
+
+  var ratingBadge = el("span", { class: "cvt-badge rating-badge", style: { fontSize:"9px", padding:"1px 4px", background: (tierLabel === "PG" ? "#2a5a2a" : tierLabel === "PG-13" ? "#5a4a2a" : tierLabel === "R" ? "#5a2a2a" : "#3a1a1a"), color:"#fff", borderRadius:"3px", marginLeft:"4px" } }, tierLabel);
+  card.appendChild(ratingBadge);
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)" } });
   if (imgUrl) {
     var img = el("img", { src: _thumbUrl(imgUrl, 400), style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.outerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;opacity:.3">\uD83D\uDDBC</div>'; } });
