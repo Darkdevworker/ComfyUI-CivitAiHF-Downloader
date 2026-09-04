@@ -332,26 +332,7 @@ async def start_download(request):
         domain = utils._get_active_domain()
 
         if model_version_id and str(model_version_id).strip() and not download_url:
-            query_params = {}
-            if data.get("format"):
-                query_params["format"] = data["format"]
-            if data.get("fp"):
-                query_params["fp"] = data["fp"]
-            if data.get("size"):
-                query_params["size"] = data["size"]
-            # Derive type from payload/model_type (avoid blocking network call here)
-            model_type_raw = data.get("type", "") or model_type or ""
-            type_map = {
-                "checkpoints": "Checkpoint", "loras": "LORA", "lora": "LORA",
-                "vae": "VAE", "controlnet": "Controlnet", "embeddings": "TextualInversion",
-                "hypernetworks": "Hypernetwork", "upscale_models": "Upscaler",
-                "animatediff_models": "MotionModule",
-            }
-            mapped = type_map.get(str(model_type_raw).lower(), "")
-            if mapped:
-                query_params["type"] = mapped
-            qs = urllib.parse.urlencode(query_params)
-            download_url = f"https://{domain}/api/download/models/{model_version_id}" + (f"?{qs}" if qs else "")
+            download_url = f"https://{domain}/api/download/models/{model_version_id}"
 
         if not download_url:
             return web.json_response({"error": "Missing url or model_version_id"}, status=400)
