@@ -47,7 +47,7 @@ function _nsfwFlags(val) {
 
 function _matchNsfw(item, flags) {
   if (!item) return false;
-  if (item.nsfw) return flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX;
+  // Removed blanket boolean check — evaluate actual tier
   var lvl = item.nsfwLevel != null ? item.nsfwLevel : item.rating;
   if (lvl == null || lvl === "" || lvl === "null" || lvl === "undefined") {
     return item.nsfw !== false;
