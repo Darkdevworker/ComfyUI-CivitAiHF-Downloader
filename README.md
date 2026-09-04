@@ -47,6 +47,7 @@
 - **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX
 - **NSFW blur** — only the NSFW bands (X · XXX) are blurred, hover to reveal
 - **Responsive** — adapts to narrow sidebar widths
+- **Civitai logo** — the “C” mark is painted onto the sidebar tab (ComfyUI only accepts icon *fonts*, so the PNG is applied over the glyph) and shown in the panel tab bar
 
 ### ⚙️ Settings
 - **API Keys** — Civitai API key and Hugging Face token with status badges (● connected / ● not set)
@@ -171,6 +172,7 @@ clip              detection         frame_interpolation latent_upscale_models  p
 | `utils.py` | Database manager, Civitai/HF API utilities, hash computation, model scanning |
 | `js/civitai.js` | Full sidebar UI (tabs, modals, lightbox, downloads, settings, keyboard nav, animations) |
 | `js/rating.js` | Content-band definitions (PG / PG-13 / R / X / XXX), rating normalisation, blur + filter helpers |
+| `js/logo.js` | The Civitai “C” mark as a data URI + `installSidebarLogo()`, which paints it onto the sidebar tab |
 | `js/civitai.css` | Dark/Light theme with animations, glassmorphism, responsive layout |
 
 ---

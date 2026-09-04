@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { installSidebarLogo, makeLogo } from "./logo.js";
 import {
   CONTENT_BANDS, BAND_ORDER, parseBandSelection, needsNsfwQuery,
   bandIdOfModel, bandIdOfImage, bandOfModel, filterByBands,
@@ -202,6 +203,7 @@ function buildUI() {
   });
 
   var tabBar = el("div", { class: "cvt-tabs" });
+  tabBar.appendChild(makeLogo(16));   // Civitai "C" mark (assets/civitai-icon.png)
   var panes = {};
   TABS.forEach(function(t) {
     var id = t[0], label = t[1], icon = t[2], anim = t[3];
@@ -2405,6 +2407,7 @@ try {
 app.registerExtension({
   name: "CivitaiHF.Browser",
   setup: function() {
+    installSidebarLogo("civitai-hf", "Civitai");
     (function tryMount() {
       if (app.extensionManager && app.extensionManager.registerSidebarTab) {
         app.extensionManager.registerSidebarTab({

@@ -1246,3 +1246,27 @@ img.nsfw:hover { filter: none; }
   position: absolute; top: 4px; left: 4px; margin: 0; opacity: .92;
   pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,.55);
 }
+
+/* ══ Sidebar / panel logo ═════════════════════════════════════════════
+   ComfyUI's registerSidebarTab() only accepts icon fonts (pi/mdi/fa), so the
+   Civitai "C" mark is painted over the glyph: js/logo.js sets
+   --cvt-sidebar-logo and tags the button, this rule does the rest.
+   ═════════════════════════════════════════════════════════════════════ */
+
+[data-testid="civitai-hf-tab-button"] .side-bar-button-icon,
+.side-bar-button.cvt-sidebar-tab .side-bar-button-icon,
+.side-bar-button[aria-label*="Civitai"] .side-bar-button-icon {
+  color: transparent !important;                 /* hide the font glyph */
+  background-image: var(--cvt-sidebar-logo, none);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+}
+
+/* Logo shown inside the panel (built by makeLogo() in js/logo.js) */
+.cvt-logo { image-rendering: auto; opacity: .95; }
+.cvt-tabs .cvt-logo { margin-right: 6px; }
