@@ -592,8 +592,20 @@ function renderBrowse(pane) {
       S.civitai.items = d.items || [];
       // Client-side NSFW rating filter
       var flags = _nsfwFlags(S.civitai.nsfw);
-      if (flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX) {
-        S.civitai.items = S.civitai.items.filter(function(m) { return _matchNsfw(m, flags); });
+      var hasSelection = (S.civitai.nsfw !== null && S.civitai.nsfw !== "") || flags.hasPG13 || flags.hasR || flags.hasX || flags.hasXXX;
+      // When PG ("") is explicitly selected, only keep items that are PG-rated
+      var pgOnly = (S.civitai.nsfw === "");
+      if (hasSelection || pgOnly) {
+        S.civitai.items = S.civitai.items.filter(function(m) {
+          if (pgOnly) {
+            // Only PG-rated items: must not be NSFW at any level above PG
+            var lvl = m.nsfwLevel || m.rating || m.nsfw || "";
+            var s = String(lvl).toLowerCase().trim();
+            // PG / None / 0 / g / everyone are safe; anything else (soft, mature, x, xxx, nsfw) excluded
+            return (s === "" || s === "none" || s === "pg" || s === "g" || s === "everyone" || s === "0");
+          }
+          return _matchNsfw(m, flags);
+        });
       }
       grid.innerHTML = "";
       if (!S.civitai.items.length) {
