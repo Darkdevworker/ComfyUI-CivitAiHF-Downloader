@@ -1192,3 +1192,57 @@ img.nsfw:hover { filter: none; }
 .cvt-dl-summary { padding-top: 2px; }
 .cvt-root.light .cvt-chip { background: rgba(0,0,0,.03); color: #666; border-color: rgba(0,0,0,.10); }
 .cvt-root.light .cvt-chip.active { background: rgba(0,0,0,.12); color: #111; border-color: rgba(0,0,0,.25); }
+
+/* ══ Content bands (PG · PG-13 · R · X · XXX) ═══════════════════════════
+   Models, LoRAs and showcase images are each categorised into one of
+   Civitai's five tiers. Only the NSFW tiers (X = graphic nudity,
+   XXX = overtly sexual) are blurred — R is badged but stays visible.
+   The threshold is configurable in Settings (Off / R+ / X+ / XXX).
+   ═════════════════════════════════════════════════════════════════════ */
+
+/* Tier badge (coloured with the official band colour) */
+.cvt-band-badge {
+  display: inline-block; font-size: 9px; font-weight: 700; line-height: 1.2;
+  padding: 1px 4px; margin-left: 4px; border-radius: 3px; color: #fff;
+  border: 1px solid transparent; letter-spacing: .2px; white-space: nowrap;
+  text-shadow: 0 1px 1px rgba(0,0,0,.35);
+}
+
+/* Filter row in the search bar */
+.cvt-band-filter { user-select: none; }
+.cvt-band-filter input[type="checkbox"] { margin: 0; accent-color: #7c5cff; cursor: pointer; }
+.cvt-band-filter label:hover { color: var(--civ-text, #ddd); }
+
+/* Legend shown under the blur setting */
+.cvt-band-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.cvt-band-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9.5px; padding: 2px 6px; border-radius: 10px;
+  border: 1px solid var(--civ-line, #333); color: var(--civ-text-dim, #aaa);
+}
+.cvt-band-chip i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.cvt-band-chip em { font-style: normal; opacity: .6; }
+
+/* Blur — applied only to images in the NSFW band(s); hover reveals them */
+.cvt-blur {
+  filter: blur(20px) grayscale(0.5);
+  transition: filter .20s var(--civ-ease-out, ease);
+  will-change: filter;
+}
+.cvt-blur:hover { filter: none; }
+
+/* Lightbox: NSFW images stay blurred until the user clicks "Reveal image" */
+.cvt-blur-lock { filter: blur(28px) grayscale(0.5); }
+
+/* On cards the badge sits over the top-left corner of the thumbnail */
+.cvt-card > .cvt-band-badge {
+  position: absolute; top: 4px; left: 4px; margin: 0; z-index: 3;
+  box-shadow: 0 1px 4px rgba(0,0,0,.55);
+}
+
+/* Gallery items wrap their image so each can carry a band badge */
+.cvt-modal .gallery .cvt-gal-item { position: relative; line-height: 0; }
+.cvt-modal .gallery .cvt-gal-item .cvt-band-badge {
+  position: absolute; top: 4px; left: 4px; margin: 0; opacity: .92;
+  pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,.55);
+}

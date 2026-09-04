@@ -1,3 +1,9 @@
+/* DISABLED FRAGMENT — this file is a leftover of the 2026-09-04 "split extension" commit.
+ * It does not parse (it starts mid-function) and every function it defines already
+ * lives in js/civitai.js, which is the module actually loaded by ComfyUI.
+ * Kept for reference only; the .disabled extension stops it being served.
+ * If you finish the split, add:  import { ... } from "./rating.js";
+ */
 (pane) {
   pane.innerHTML = "";
   pane.appendChild(el("h2", { style: { fontSize:"14px", marginBottom:"6px" } }, "\u2B50 Bookmarks"));

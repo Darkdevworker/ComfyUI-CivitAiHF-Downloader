@@ -1112,6 +1112,7 @@ async def get_settings(request):
         "hfToken": bool(utils.db_manager.get_setting("hf_token")),
         "network_choice": utils.db_manager.get_setting("network_choice", "com"),
         "nsfw_blur": utils.db_manager.get_setting("nsfw_blur", True),
+        "nsfw_blur_level": utils.db_manager.get_setting("nsfw_blur_level", "X"),
         "theme": utils.db_manager.get_setting("theme", "dark"),
         "compact_grid": utils.db_manager.get_setting("compact_grid", False),
         "has_api_key": bool(utils.db_manager.get_setting("civitai_api_key")),
@@ -1125,7 +1126,7 @@ async def save_settings(request):
     try:
         data = await request.json()
         bool_keys = {"save_metadata", "save_preview", "compute_sha", "nsfw_blur", "compact_grid"}
-        str_keys = {"nsfw_default", "network_choice", "theme"}
+        str_keys = {"nsfw_default", "network_choice", "theme", "nsfw_blur_level"}
         for key in bool_keys:
             if key in data:
                 utils.db_manager.set_setting(key, bool(data[key]))

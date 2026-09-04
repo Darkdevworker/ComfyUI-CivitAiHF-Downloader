@@ -44,14 +44,62 @@
 - **Keyboard navigation** — `/` search, `←→↑↓` navigate cards, `Enter` opens, `Esc` closes, `1-5` switch tabs, `?` shows all shortcuts
 - **Compact grid mode** — toggle via Settings or `Ctrl+C` for denser card layout
 - **Comprehensive animations** — staggered card entrances, shimmer hover effects, spring physics, smooth transitions throughout
-- **NSFW blur** — blurred previews with hover-to-reveal
+- **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX
+- **NSFW blur** — only the NSFW bands (X · XXX) are blurred, hover to reveal
 - **Responsive** — adapts to narrow sidebar widths
 
 ### ⚙️ Settings
 - **API Keys** — Civitai API key and Hugging Face token with status badges (● connected / ● not set)
-- **Preferences** — save metadata, save previews, verify SHA256, NSFW blur, compact grid
+- **Preferences** — save metadata, save previews, verify SHA256, NSFW blur + blur threshold, compact grid
 - **Network** — switch between `civitai.com`, `civitai.red`, `civitai.work` domains
 - **Quick Actions** — Auto-Tag, Cleanup, Organize, Rescan with one-click cards
+
+---
+
+## 🔞 Content Bands (PG · PG-13 · R · X · XXX)
+
+Civitai splits models, LoRAs and showcase images into five strict tiers. This
+extension uses exactly those tiers for **categorising** and for deciding what
+to **blur**:
+
+| Band | Name | Examples | Blurred by default |
+|------|------|----------|--------------------|
+| 🟢 **PG** | Safe for Work | Standard, universally safe content — zero adult material | no |
+| 🟠 **PG-13** | Lightly Risqué | Revealing clothing, navels, cleavage, sexy attire, light violence, mild gore | no |
+| 🔴 **R** | Risqué / Mature | Adult themes, partial nudity (bikinis, underwear, leotards), sensual but non-explicit situations, graphic violence | no |
+| 🟣 **X** | Graphic Nudity | Explicit graphic nudity, clear anatomy, adult objects/settings, no full sexual acts | **yes** |
+| ⚫ **XXX** | Overtly Sexual | Explicit sexual acts, highly graphic presentation, deeply disturbing concepts | **yes** |
+
+**How it works**
+
+- **Categorising** — every card shows a coloured band badge. A *model* is
+  categorised by the highest tier among its own rating and all of its preview
+  images; a *showcase image* is categorised individually (so one XXX preview
+  marks the model XXX, while the model's own PG previews stay unblurred).
+- **Filtering** — the search bar has five checkboxes, one per band. Ticking
+  `PG` + `R` shows only models rated PG or R. Nothing ticked = no filter.
+  The same filter applies inside a model's gallery.
+- **Blurring** — only the **NSFW** bands are blurred (X and XXX by default).
+  R gets a red badge but stays visible, matching Civitai's own behaviour.
+  Hovering any blurred thumbnail reveals it.
+- **Threshold** — Settings → Preferences → *Blur content rated* lets you pick
+  `Off` / `R and up` / `X and up` (default) / `XXX only`. Changing it
+  re-renders the tab immediately.
+- **Local library** — downloaded models are categorised from their
+  `.civitai.json` sidecar (only the `nsfwLevel` key is peeked at during a scan,
+  so scanning stays fast).
+
+Civitai reports the tier three different ways and all three are handled:
+
+| Shape | Example | Meaning |
+|-------|---------|---------|
+| numeric bitmask | `nsfwLevel: 1 / 2 / 4 / 8 / 16 / 32` | PG / PG-13 / R / X / XXX / Blocked |
+| string enum | `nsfwLevel: "None" / "Soft" / "Mature" / "X" / "XXX"` | the same five tiers |
+| boolean | `nsfw: true` | flagged with no tier → treated as **R** (badged, not blurred) |
+
+> The mapping lives in one place — [`js/rating.js`](js/rating.js) — and is
+> mirrored for local scans in `utils.py`.
+> Tests: `node tests/test_content_bands.mjs` and `node tests/test_band_ui.mjs`.
 
 ---
 
@@ -122,6 +170,7 @@ clip              detection         frame_interpolation latent_upscale_models  p
 | `server.py` | All API endpoints (search, download, local management, settings, prompt fetcher) |
 | `utils.py` | Database manager, Civitai/HF API utilities, hash computation, model scanning |
 | `js/civitai.js` | Full sidebar UI (tabs, modals, lightbox, downloads, settings, keyboard nav, animations) |
+| `js/rating.js` | Content-band definitions (PG / PG-13 / R / X / XXX), rating normalisation, blur + filter helpers |
 | `js/civitai.css` | Dark/Light theme with animations, glassmorphism, responsive layout |
 
 ---

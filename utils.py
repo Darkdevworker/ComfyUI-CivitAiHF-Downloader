@@ -1027,6 +1027,77 @@ def initiate_background_scan(main_loop):
 MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf"}
 
 
+# ── Content bands (PG / PG-13 / R / X / XXX) ─────────────────────────
+# Civitai reports a tier as a numeric bitmask (1=PG, 2=PG-13, 4=R, 8=X,
+# 16=XXX, 32=Blocked) or as a string enum. The JS side (js/rating.js) uses
+# the exact same mapping.
+BAND_IDS = ["PG", "PG-13", "R", "X", "XXX"]
+_BAND_BIT_RANK = {1: 0, 2: 1, 4: 2, 8: 3, 16: 4, 32: 4}
+_BAND_STR_RANK = {
+    "none": 0, "pg": 0, "g": 0, "everyone": 0,
+    "soft": 1, "pg13": 1, "pg-13": 1, "teen": 1,
+    "mature": 2, "r": 2, "r15": 2, "adult": 2,
+    "x": 3, "r18": 3, "explicit": 3, "nsfw": 3,
+    "xxx": 4, "blocked": 4, "banned": 4,
+}
+_NSFW_NUM_RE = re.compile(r'"nsfwLevel"\s*:\s*(\d+)')
+_NSFW_STR_RE = re.compile(r'"nsfwLevel"\s*:\s*"([A-Za-z\-]+)"')
+
+
+def band_id_from_value(value):
+    """Normalise any Civitai nsfwLevel shape to one of the five band ids."""
+    if value is None:
+        return "PG"
+    if isinstance(value, bool):
+        return "R" if value else "PG"
+    if isinstance(value, int):
+        return _band_id_from_number(value)
+    text = str(value).strip()
+    if not text or text.lower() in ("null", "undefined"):
+        return "PG"
+    try:
+        return _band_id_from_number(int(float(text)))
+    except (TypeError, ValueError):
+        pass
+    return BAND_IDS[_BAND_STR_RANK.get(text.lower().replace(" ", "").replace("_", ""), 0)]
+
+
+def _band_id_from_number(n):
+    n = int(n)
+    if n <= 0:
+        return "PG"
+    bits = [b for b in _BAND_BIT_RANK if n & b]
+    if bits:
+        return BAND_IDS[_BAND_BIT_RANK[max(bits)]]
+    # legacy 0/1/2/3/4 ordinal scale
+    return BAND_IDS[min(n, 4)]
+
+
+def peek_nsfw_band(model_path):
+    """
+    Cheaply read the content band out of a .civitai.json sidecar.
+    Only the nsfwLevel keys are regex-scanned in the first 256 KB — the full
+    JSON is still loaded lazily on the detail view, so scans stay fast.
+    """
+    json_path = os.path.splitext(model_path)[0] + ".civitai.json"
+    if not os.path.isfile(json_path):
+        return None
+    try:
+        with open(json_path, "r", errors="ignore") as fh:
+            head = fh.read(262144)
+    except Exception:
+        return None
+    worst = 0
+    for raw in _NSFW_NUM_RE.findall(head):
+        try:
+            worst = max(worst, BAND_IDS.index(_band_id_from_number(int(raw))))
+        except Exception:
+            continue
+    for raw in _NSFW_STR_RE.findall(head):
+        worst = max(worst, _BAND_STR_RANK.get(raw.lower(), 0))
+    return BAND_IDS[worst]
+
+
 def scan_local_models_direct():
     """
     Recursive filesystem scan of models_dir — finds ALL model files in ALL
@@ -1067,11 +1138,14 @@ def scan_local_models_direct():
                     if os.path.isfile(pf):
                         preview = pf
 
-                # Skip JSON parsing during scan — metadata loads lazily on detail view
+                # Skip full JSON parsing during scan — metadata loads lazily on detail view.
+                # We only peek at the content band (PG…XXX) so the library can be
+                # categorised/blurred without paying for a full parse.
                 metadata = {}
-                has_json = os.path.isfile(full_path.replace(".safetensors", ".civitai.json"))
+                has_json = os.path.isfile(os.path.splitext(full_path)[0] + ".civitai.json")
+                band = peek_nsfw_band(full_path) if has_json else None
 
-                nsfw = False
+                nsfw = band in ("X", "XXX")
                 tags = []
                 description = ""
                 creator = ""
@@ -1087,6 +1161,8 @@ def scan_local_models_direct():
                     "size_mb": round(size / 1e6, 1),
                     "hash": fhash or None,
                     "nsfw": nsfw,
+                    "nsfwLevel": band,          # "PG" | "PG-13" | "R" | "X" | "XXX" | null
+                    "band": band or "PG",
                     "folder": folder,
                     "preview": preview,
                     "base_model": base_model,
