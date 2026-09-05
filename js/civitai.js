@@ -432,7 +432,7 @@ function _openBookmark(b) {
 function _downloadBookmark(b) {
   if (_bmSource(b) === "hf") { _openBookmark(b); return; }
   var body = {
-    model_version_id: b.model_version_id || b.id,
+    model_version_id: b.model_version_id || b.model_id || 0,
     save_as: _bmFolderForType(b.type),
     filename: b.filename || b.name || "model.safetensors",
     subfolder: b.subfolder || "",
@@ -491,13 +491,26 @@ function _bookmarkCard(b, onChange) {
              display: "flex", alignItems: "center", justifyContent: "center" } }, "\u2715");
   rmBtn.onclick = function(e) {
     e.stopPropagation();
+    rmBtn.disabled = true;
     _api("/civitai/bookmarks-delete", { method: "POST", body: JSON.stringify({
       id: b.id || "", source: src,
       model_version_id: b.model_version_id || 0, repo_id: b.repo_id || ""
-    }) }).then(function() {
+    }) }).then(function(r) {
+      if (r && r.success === false) {
+        rmBtn.disabled = false;
+        _toast("Could not remove: " + (r.message || "not found"), "error");
+        return;
+      }
+      // Expire the cached list and take the card off screen straight away,
+      // so a removed bookmark never lingers while the reload is in flight.
+      _cache.del("/civitai/bookmarks");
+      if (card.parentNode) card.remove();
       _toast("Bookmark removed", "ok");
       if (onChange) onChange();
-    }).catch(function(e2) { _toast("Delete error: " + e2.message, "error"); });
+    }).catch(function(e2) {
+      rmBtn.disabled = false;
+      _toast("Delete error: " + e2.message, "error");
+    });
   };
   card.appendChild(rmBtn);
 
@@ -571,7 +584,8 @@ function renderBookmarks(pane) {
   }
 
   function _reload() {
-    _api("/civitai/bookmarks").then(function(d) {
+    // GETs are cached — a plain _api here would just re-render the old list
+    _apiFresh("/civitai/bookmarks").then(function(d) {
       items = d.items || d || [];
       _render();
     }).catch(function(e) {
