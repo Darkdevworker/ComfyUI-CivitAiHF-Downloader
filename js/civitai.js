@@ -1189,10 +1189,14 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     _api("/civitai/download", { method:"POST", body:JSON.stringify(body) }).then(function(job) {
       statusLine.innerHTML = "";
       statusLine.appendChild(document.createTextNode((metadataOnly ? "Metadata job queued: " : "Queued: ")));
-      statusLine.appendChild(el("b", {}, job.id));
+      statusLine.appendChild(el("b", {}, job.task_id || job.id));
       statusLine.appendChild(document.createTextNode(" \u2014 open "));
       var dlLink = el("a", { href: "#", style: { color:"var(--civ-accent-dim)", cursor:"pointer" } }, "Downloads");
-      dlLink.onclick = function(e) { e.preventDefault(); if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "downloads" })); };
+      dlLink.onclick = function(e) {
+        e.preventDefault();
+        closeModal();   // the detail modal covers the panel, so get out of the way
+        if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "downloads" }));
+      };
       statusLine.appendChild(dlLink);
       statusLine.appendChild(document.createTextNode(" to monitor."));
       // Mini progress bar
@@ -1938,11 +1942,12 @@ function _hfDetail(repoIdOrData, repoType) {
       _api("/civitai/hf/download", { method:"POST", body:JSON.stringify(body) }).then(function(job) {
         statusLine.innerHTML = "";
         statusLine.appendChild(document.createTextNode("Queued: "));
-        statusLine.appendChild(el("b", {}, job.id));
+        statusLine.appendChild(el("b", {}, job.task_id || job.id));
         statusLine.appendChild(document.createTextNode(" \u2014 open "));
         var dlLink = el("a", { href: "#", style: { color:"#ec9", cursor:"pointer" } }, "Downloads");
         dlLink.onclick = function(e) {
-          e.preventDefault(); bg.remove();
+          e.preventDefault();
+          closeModal();   // the detail modal covers the panel, so get out of the way
           if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "downloads" }));
         };
         statusLine.appendChild(dlLink);

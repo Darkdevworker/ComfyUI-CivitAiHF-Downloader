@@ -420,7 +420,8 @@ async def start_download(request):
             asyncio.ensure_future(_save_metadata_and_preview(
                 model_version_id, save_path, save_metadata, save_preview, domain, ""
             ))
-            return web.json_response({"task_id": "meta_" + str(model_version_id)})
+            return web.json_response({"task_id": "meta_" + str(model_version_id),
+                                      "id": "meta_" + str(model_version_id)})
 
         task_id = f"dl_{int(time.time())}_{hashlib.md5(download_url.encode()).hexdigest()[:8]}"
         DOWNLOAD_TASKS[task_id] = {
@@ -528,7 +529,8 @@ async def start_download(request):
                     DOWNLOAD_TASKS[task_id]["error"] = str(e)
 
         asyncio.ensure_future(_download())
-        return web.json_response({"task_id": task_id, "filename": filename})
+        # `id` mirrors the Hugging Face route — the UI reads that field
+        return web.json_response({"task_id": task_id, "id": task_id, "filename": filename})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
