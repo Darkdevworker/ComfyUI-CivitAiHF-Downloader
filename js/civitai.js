@@ -95,7 +95,8 @@ window.__nsfwBlurEnabled = true;
 
 var S = {
   curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModel: "", loading: false,
-    cursor: "", cursorStack: [], nextCursor: null, limit: 24 },
+    cursor: "", cursorStack: [], nextCursor: null, limit: 24,
+    seen: {}, loaded: 0, total: 0 },
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "" },
   downloads: [], dlFilter: "all", local: { models: [], filter: "" },
   settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true },
@@ -669,18 +670,56 @@ function renderBrowse(pane) {
   pane.appendChild(grid);
   pane.appendChild(empty);
   var pager = el("div", { class: "cvt-pager" });
-  var prevBtn = el("button", { class: "cvt-btn ghost", disabled: true }, "\u2190 Prev");
-  var pageInfo = el("span", { class: "page-info" }, "Page 1");
-  var nextBtn = el("button", { class: "cvt-btn ghost" }, "Next \u2192");
-  pager.appendChild(prevBtn); pager.appendChild(pageInfo); pager.appendChild(nextBtn);
+  var pageInfo = el("span", { class: "page-info" }, "");
+  var moreBtn = el("button", { class: "cvt-btn ghost", style: { display: "none" } }, "Load more");
+  pager.appendChild(pageInfo); pager.appendChild(moreBtn);
   pane.appendChild(pager);
+  // Scrolling this into view pulls the next page automatically, so a search
+  // can return well past one page of results without anyone clicking.
+  var sentinel = el("div", { style: { height: "1px" } });
+  pane.appendChild(sentinel);
 
   function _resetAndSearch() {
     S.civitai.cursor = "";
     S.civitai.cursorStack = [];
     S.civitai.nextCursor = null;
+    S.civitai.seen = {};
+    S.civitai.loaded = 0;
+    S.civitai.total = 0;
     _cache.clear();
-    _runSearch();
+    _runSearch(1, false);
+  }
+
+  // Append the next page of results to the grid instead of replacing it.
+  function _loadMore() {
+    if (S.civitai.loading || !S.civitai.nextCursor) return;
+    S.civitai.cursor = S.civitai.nextCursor;
+    _runSearch(1, true);
+  }
+
+  function _updatePager() {
+    pager.style.display = "";
+    var loaded = S.civitai.loaded;
+    if (!loaded) { pageInfo.textContent = ""; moreBtn.style.display = "none"; return; }
+    var total = S.civitai.total || 0;
+    // Without nsfw=true Civitai leaves adult models out of the results
+    // entirely, so the total here is the safe-for-work count.
+    var sfwOnly = !needsNsfwQuery(parseBandSelection(S.civitai.nsfw));
+    pageInfo.textContent = (total && total > loaded)
+      ? "Showing " + loaded + " of " + _fmtNum(total) + " models" + (sfwOnly ? " \u00B7 adult hidden" : "")
+      : loaded + (loaded === 1 ? " model" : " models") +
+        (loaded ? " \u00B7 end of results" + (sfwOnly ? " \u00B7 adult hidden" : "") : "");
+    moreBtn.style.display = S.civitai.nextCursor ? "" : "none";
+    moreBtn.disabled = false;
+    moreBtn.textContent = "Load more";
+  }
+
+  moreBtn.onclick = function() { _loadMore(); };
+  if (typeof IntersectionObserver !== "undefined") {
+    pane._moreObserver = new IntersectionObserver(function(entries) {
+      entries.forEach(function(en) { if (en.isIntersecting) _loadMore(); });
+    }, { rootMargin: "400px 0px" });
+    pane._moreObserver.observe(sentinel);
   }
 
   function _lastParams() {
@@ -696,11 +735,17 @@ function renderBrowse(pane) {
     return params;
   }
 
-  function _runSearch(attempt) {
+  var _appendMode = false;
+  function _runSearch(attempt, append) {
     attempt = attempt || 1;
+    if (typeof append === "boolean") _appendMode = append;
     if (S.civitai.loading) return;
     S.civitai.loading = true;
-    _renderSkeletons(grid, S.civitai.limit);
+    if (!_appendMode) {
+      _renderSkeletons(grid, S.civitai.limit);
+    } else {
+      moreBtn.disabled = true; moreBtn.textContent = "Loading\u2026";
+    }
     empty.style.display = "none";
     S.civitai.query = qIn.value;
     S.civitai.sort = sortSel.value;
@@ -714,29 +759,36 @@ function renderBrowse(pane) {
     }
     var params = _lastParams();
     _api("/civitai/search?" + params.toString()).then(function(d) {
-      S.civitai.items = d.items || [];
+      var batch = d.items || [];
       // Client-side content-band filter: keep models whose overall tier
       // (model level, or the highest tier among its preview images) is ticked.
       var bandSel = parseBandSelection(S.civitai.nsfw);
-      if (bandSel.length) {
-        S.civitai.items = filterByBands(S.civitai.items, bandSel, false);
-      }
-      grid.innerHTML = "";
+      if (bandSel.length) batch = filterByBands(batch, bandSel, false);
+      // Skip anything already on screen — pages can overlap when sorting.
+      var fresh = batch.filter(function(m) {
+        var k = String(m.id || ((m.name || "") + "#" +
+          ((m.modelVersions && m.modelVersions[0] && m.modelVersions[0].id) || "")));
+        if (S.civitai.seen[k]) return false;
+        S.civitai.seen[k] = 1;
+        return true;
+      });
+      if (!_appendMode) { grid.innerHTML = ""; S.civitai.items = []; }
+      S.civitai.items = S.civitai.items.concat(fresh);
+      var frag = document.createDocumentFragment();
+      fresh.forEach(function(m) { frag.appendChild(_card(m)); });
+      grid.appendChild(frag);
+
+      S.civitai.loaded = S.civitai.items.length;
+      var meta = (d && d.metadata) || {};
+      if (meta.totalItems) S.civitai.total = meta.totalItems;
+      S.civitai.nextCursor = meta.nextCursor || null;
       if (!S.civitai.items.length) {
         empty.style.display = "block";
         empty.innerHTML = "\uD83D\uDD0E  No models match. Try a different query.";
-        pager.innerHTML = "";
-        return;
+      } else {
+        empty.style.display = "none";
       }
-      var frag = document.createDocumentFragment();
-      S.civitai.items.forEach(function(m) { frag.appendChild(_card(m)); });
-      grid.appendChild(frag);
-
-      S.civitai.nextCursor = d && d.metadata && d.metadata.nextCursor ? d.metadata.nextCursor : null;
-      var pageNum = S.civitai.cursorStack.length + 1;
-      pageInfo.textContent = "Page " + pageNum;
-      prevBtn.disabled = !S.civitai.cursorStack.length;
-      nextBtn.disabled = !S.civitai.nextCursor;
+      _updatePager();
     }).catch(function(e) {
       _showSearchError(e, attempt, sb, grid, empty, pager);
     }).then(function() { S.civitai.loading = false; });
@@ -744,7 +796,7 @@ function renderBrowse(pane) {
 
   function _showSearchError(e, attempt, sb, grid, empty, pager) {
     grid.innerHTML = "";
-    pager.innerHTML = "";
+    pager.style.display = "none";
     var isTransient = !!e.transient;
     var code = e.status || 0;
     var heading = isTransient
@@ -782,20 +834,6 @@ function renderBrowse(pane) {
 
   goBtn.onclick = function() { _resetAndSearch(); };
   qIn.onkeydown = function(e) { if (e.key === "Enter") { _resetAndSearch(); } };
-  prevBtn.onclick = function() {
-    if (S.civitai.cursorStack.length) {
-      S.civitai.cursor = S.civitai.cursorStack.pop() || "";
-      _runSearch();
-    }
-  };
-  nextBtn.onclick = function() {
-    if (S.civitai.nextCursor) {
-      if (S.civitai.cursorStack.length > 50) S.civitai.cursorStack.shift();
-      S.civitai.cursorStack.push(S.civitai.cursor);
-      S.civitai.cursor = S.civitai.nextCursor;
-      _runSearch();
-    }
-  };
 }
 
 function _lookupCivitai(raw, fieldEl) {

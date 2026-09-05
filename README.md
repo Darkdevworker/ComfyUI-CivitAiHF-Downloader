@@ -27,6 +27,11 @@
 - **Metadata & preview images** — optionally save alongside models
 - **Batch downloads** from both Civitai and Hugging Face
 
+### 🔎 Civitai Browse
+- **All the results, not just the first page** — results keep loading as you scroll (with a "Load more" button as a fallback)
+- Footer shows **"Showing 24 of 57 models"** so you can tell how much Civitai actually has
+- Flags when Civitai is excluding adult models (`· adult hidden`) — tick X / XXX in the Bands row to include them
+
 ### ⭐ Bookmarks
 - **Both sources** — Civitai *and* Hugging Face models can be bookmarked (each is keyed on its own id, so HF repos no longer collide)
 - **Card grid** with preview, source chip, content band and remove button
