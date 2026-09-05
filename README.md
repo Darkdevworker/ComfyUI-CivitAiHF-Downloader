@@ -18,9 +18,11 @@
 - **Civitai** — Search by query, model type, sort order, time period, base model, and NSFW rating
 - **Hugging Face** — Search by pipeline tag, library, author, and sort order
 - **Lookup** — Resolve any Civitai URL, model ID, version ID, or SHA256 hash
-- **Loads every page** — results keep loading as you scroll in both grids, so a search is never capped at the first page
+- **Page navigation** — step through results with Prev/Next in both grids; the footer shows the range and total (`Page 2 · Showing 25–48 of 57 models`)
 
 ### 📥 Downloads
+- **Login-required models** — set your Civitai API key in Settings and it is sent with the download; if Civitai still refuses, the job says why (creator requires login / file removed / rate limited) and offers a shortcut to Settings
+- **The file you picked is the file you get** — the chosen variant's own URL (with its `fileId`) is what downloads
 - **One-click download** with configurable folder, subfolder, and filename
 - **Real-time progress** — speed, percentage, downloaded/total size
 - **SHA256 hash always saved** — every downloaded model gets its hash stored in `.civitai.json`
@@ -28,13 +30,13 @@
 - **Batch downloads** from both Civitai and Hugging Face
 
 ### 🤗 Hugging Face Browse
-- **All matching repos, not just the first 30** — pages are appended as you scroll, de-duplicated across pages
-- Footer reports the running count (`60 repos so far` / `157 repos · end of results`)
-- Uses Hugging Face's own `Link` header cursor when present, falling back to `skip`
+- **All matching repos, not just the first 30** — step through pages with Prev/Next, each page fetched by offset
+- Footer reports the page and what it holds (`Page 2 · 30 repos` / `Page 6 · 7 repos · end of results`)
+- The server follows Hugging Face's `Link` header cursor when it has one, falling back to `skip`
 
 ### 🔎 Civitai Browse
 - **All the results, not just the first page** — results keep loading as you scroll (with a "Load more" button as a fallback)
-- Footer shows **"Showing 24 of 57 models"** so you can tell how much Civitai actually has
+- Footer shows **"Page 2 · Showing 25–48 of 57 models"** so you can tell how much Civitai actually has
 - Flags when Civitai is excluding adult models (`· adult hidden`) — tick X / XXX in the Bands row to include them
 
 ### ⭐ Bookmarks

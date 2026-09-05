@@ -96,9 +96,9 @@ window.__nsfwBlurEnabled = true;
 var S = {
   curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModel: "", loading: false,
     cursor: "", cursorStack: [], nextCursor: null, limit: 24,
-    seen: {}, loaded: 0, total: 0 },
+    page: 1, total: 0 },
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "",
-    seen: {}, skip: 0, nextCursor: "", loaded: 0, done: false },
+    page: 1, done: false },
   downloads: [], dlFilter: "all", local: { models: [], filter: "" },
   settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true },
   modal: null, lightbox: null,
@@ -671,56 +671,62 @@ function renderBrowse(pane) {
   pane.appendChild(grid);
   pane.appendChild(empty);
   var pager = el("div", { class: "cvt-pager" });
+  var prevBtn = el("button", { class: "cvt-btn ghost" }, "\u2190 Prev");
   var pageInfo = el("span", { class: "page-info" }, "");
-  var moreBtn = el("button", { class: "cvt-btn ghost", style: { display: "none" } }, "Load more");
-  pager.appendChild(pageInfo); pager.appendChild(moreBtn);
+  var nextBtn = el("button", { class: "cvt-btn ghost" }, "Next \u2192");
+  pager.appendChild(prevBtn); pager.appendChild(pageInfo); pager.appendChild(nextBtn);
   pane.appendChild(pager);
-  // Scrolling this into view pulls the next page automatically, so a search
-  // can return well past one page of results without anyone clicking.
-  var sentinel = el("div", { style: { height: "1px" } });
-  pane.appendChild(sentinel);
+  prevBtn.onclick = function() { _goPage(-1); };
+  nextBtn.onclick = function() { _goPage(1); };
+
+  function _scrollResultsTop() {
+    var box = (pane.scrollHeight > pane.clientHeight) ? pane : (pane.parentElement || pane);
+    if (box && box.scrollTop != null) box.scrollTop = 0;
+  }
 
   function _resetAndSearch() {
     S.civitai.cursor = "";
     S.civitai.cursorStack = [];
     S.civitai.nextCursor = null;
-    S.civitai.seen = {};
-    S.civitai.loaded = 0;
+    S.civitai.page = 1;
     S.civitai.total = 0;
     _cache.clear();
-    _runSearch(1, false);
+    _runSearch(1);
   }
 
-  // Append the next page of results to the grid instead of replacing it.
-  function _loadMore() {
-    if (S.civitai.loading || !S.civitai.nextCursor) return;
-    S.civitai.cursor = S.civitai.nextCursor;
-    _runSearch(1, true);
+  // Discrete pages: a page replaces the grid and jumps back to the top.
+  function _goPage(delta) {
+    if (S.civitai.loading) return;
+    if (delta > 0) {
+      if (!S.civitai.nextCursor) return;
+      S.civitai.cursorStack.push(S.civitai.cursor);
+      S.civitai.cursor = S.civitai.nextCursor;
+      S.civitai.page += 1;
+    } else {
+      if (!S.civitai.cursorStack.length) return;
+      S.civitai.cursor = S.civitai.cursorStack.pop() || "";
+      S.civitai.page -= 1;
+    }
+    _runSearch(1);
+    _scrollResultsTop();
   }
 
   function _updatePager() {
     pager.style.display = "";
-    var loaded = S.civitai.loaded;
-    if (!loaded) { pageInfo.textContent = ""; moreBtn.style.display = "none"; return; }
-    var total = S.civitai.total || 0;
-    // Without nsfw=true Civitai leaves adult models out of the results
-    // entirely, so the total here is the safe-for-work count.
-    var sfwOnly = !needsNsfwQuery(parseBandSelection(S.civitai.nsfw));
-    pageInfo.textContent = (total && total > loaded)
-      ? "Showing " + loaded + " of " + _fmtNum(total) + " models" + (sfwOnly ? " \u00B7 adult hidden" : "")
-      : loaded + (loaded === 1 ? " model" : " models") +
-        (loaded ? " \u00B7 end of results" + (sfwOnly ? " \u00B7 adult hidden" : "") : "");
-    moreBtn.style.display = S.civitai.nextCursor ? "" : "none";
-    moreBtn.disabled = false;
-    moreBtn.textContent = "Load more";
-  }
-
-  moreBtn.onclick = function() { _loadMore(); };
-  if (typeof IntersectionObserver !== "undefined") {
-    pane._moreObserver = new IntersectionObserver(function(entries) {
-      entries.forEach(function(en) { if (en.isIntersecting) _loadMore(); });
-    }, { rootMargin: "400px 0px" });
-    pane._moreObserver.observe(sentinel);
+    var page = S.civitai.page || 1;
+    var count = S.civitai.items.length;
+    var bits = ["Page " + page];
+    if (count) {
+      var first = (page - 1) * S.civitai.limit + 1;
+      bits.push("Showing " + first + "\u2013" + (first + count - 1) +
+        (S.civitai.total ? " of " + _fmtNum(S.civitai.total) + " models" : ""));
+      // Without nsfw=true Civitai leaves adult models out of the results
+      // entirely, so the total here is the safe-for-work count.
+      if (!needsNsfwQuery(parseBandSelection(S.civitai.nsfw))) bits.push("adult hidden");
+    }
+    pageInfo.textContent = bits.join(" \u00B7 ");
+    prevBtn.disabled = !S.civitai.cursorStack.length;
+    nextBtn.disabled = !S.civitai.nextCursor;
   }
 
   function _lastParams() {
@@ -736,17 +742,11 @@ function renderBrowse(pane) {
     return params;
   }
 
-  var _appendMode = false;
-  function _runSearch(attempt, append) {
+  function _runSearch(attempt) {
     attempt = attempt || 1;
-    if (typeof append === "boolean") _appendMode = append;
     if (S.civitai.loading) return;
     S.civitai.loading = true;
-    if (!_appendMode) {
-      _renderSkeletons(grid, S.civitai.limit);
-    } else {
-      moreBtn.disabled = true; moreBtn.textContent = "Loading\u2026";
-    }
+    _renderSkeletons(grid, S.civitai.limit);
     empty.style.display = "none";
     S.civitai.query = qIn.value;
     S.civitai.sort = sortSel.value;
@@ -760,26 +760,17 @@ function renderBrowse(pane) {
     }
     var params = _lastParams();
     _api("/civitai/search?" + params.toString()).then(function(d) {
-      var batch = d.items || [];
+      var items = d.items || [];
       // Client-side content-band filter: keep models whose overall tier
       // (model level, or the highest tier among its preview images) is ticked.
       var bandSel = parseBandSelection(S.civitai.nsfw);
-      if (bandSel.length) batch = filterByBands(batch, bandSel, false);
-      // Skip anything already on screen — pages can overlap when sorting.
-      var fresh = batch.filter(function(m) {
-        var k = String(m.id || ((m.name || "") + "#" +
-          ((m.modelVersions && m.modelVersions[0] && m.modelVersions[0].id) || "")));
-        if (S.civitai.seen[k]) return false;
-        S.civitai.seen[k] = 1;
-        return true;
-      });
-      if (!_appendMode) { grid.innerHTML = ""; S.civitai.items = []; }
-      S.civitai.items = S.civitai.items.concat(fresh);
+      if (bandSel.length) items = filterByBands(items, bandSel, false);
+      S.civitai.items = items;
+      grid.innerHTML = "";
       var frag = document.createDocumentFragment();
-      fresh.forEach(function(m) { frag.appendChild(_card(m)); });
+      items.forEach(function(m) { frag.appendChild(_card(m)); });
       grid.appendChild(frag);
 
-      S.civitai.loaded = S.civitai.items.length;
       var meta = (d && d.metadata) || {};
       if (meta.totalItems) S.civitai.total = meta.totalItems;
       S.civitai.nextCursor = meta.nextCursor || null;
@@ -1167,6 +1158,9 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     var file = fls[fIdx] || {};
     var body = {
       model_version_id: curVersion.id,
+      // The picked file's own URL (carries ?fileId=) so the chosen variant is
+      // what downloads, not the version's primary file.
+      url: file.downloadUrl || curVersion.downloadUrl || "",
       save_as: folderSel.value === "auto" ? _guessFolder(model.type) : folderSel.value,
       filename: fnameLbl.querySelector("input").value.trim(),
       overwrite: overwriteLbl.querySelector("input").checked,
@@ -1677,90 +1671,74 @@ function renderHF(pane) {
   pane.appendChild(grid);
 
   var pager = el("div", { class: "cvt-pager" });
+  var prevBtn = el("button", { class: "cvt-btn ghost" }, "\u2190 Prev");
   var pageInfo = el("span", { class: "page-info" }, "");
-  var moreBtn = el("button", { class: "cvt-btn ghost", style: { display: "none" } }, "Load more");
-  pager.appendChild(pageInfo); pager.appendChild(moreBtn);
+  var nextBtn = el("button", { class: "cvt-btn ghost" }, "Next \u2192");
+  pager.appendChild(prevBtn); pager.appendChild(pageInfo); pager.appendChild(nextBtn);
   pane.appendChild(pager);
-  var sentinel = el("div", { style: { height: "1px" } });
-  pane.appendChild(sentinel);
+  prevBtn.onclick = function() { _goHFPage(-1); };
+  nextBtn.onclick = function() { _goHFPage(1); };
+
+  function _scrollHFTop() {
+    var box = (pane.scrollHeight > pane.clientHeight) ? pane : (pane.parentElement || pane);
+    if (box && box.scrollTop != null) box.scrollTop = 0;
+  }
 
   goBtn.onclick = _srch;
   qIn.onkeydown = function(e) { if (e.key === "Enter") _srch(); };
 
   var HF_PAGE = 30;
-  var _hfAppend = false;
   var _hfLoading = false;
 
   function _updateHFPager() {
-    var loaded = S.hf.loaded;
-    if (!loaded) { pageInfo.textContent = ""; moreBtn.style.display = "none"; return; }
-    pageInfo.textContent = loaded + (loaded === 1 ? " repo" : " repos") +
-      (S.hf.done ? " \u00B7 end of results" : " so far");
-    moreBtn.style.display = S.hf.done ? "none" : "";
-    moreBtn.disabled = false;
-    moreBtn.textContent = "Load more";
+    var page = S.hf.page || 1;
+    var count = S.hf.items.length;
+    var bits = ["Page " + page];
+    if (count) bits.push(count + (count === 1 ? " repo" : " repos"));
+    else bits.push("no results");
+    if (S.hf.done && count) bits.push("end of results");
+    pageInfo.textContent = bits.join(" \u00B7 ");
+    prevBtn.disabled = page <= 1;
+    nextBtn.disabled = S.hf.done;
   }
 
-  function _loadMoreHF() {
-    if (_hfLoading || S.hf.done) return;
-    _runHFSearch(true);
+  // Discrete pages: a page replaces the grid and jumps back to the top.
+  function _goHFPage(delta) {
+    if (_hfLoading) return;
+    var next = (S.hf.page || 1) + delta;
+    if (next < 1) return;
+    if (delta > 0 && S.hf.done) return;
+    S.hf.page = next;
+    _runHFSearch();
+    _scrollHFTop();
   }
 
-  moreBtn.onclick = function() { _loadMoreHF(); };
-  if (typeof IntersectionObserver !== "undefined") {
-    pane._hfMoreObserver = new IntersectionObserver(function(entries) {
-      entries.forEach(function(en) { if (en.isIntersecting) _loadMoreHF(); });
-    }, { rootMargin: "400px 0px" });
-    pane._hfMoreObserver.observe(sentinel);
-  }
-
-  function _runHFSearch(append) {
-    if (typeof append === "boolean") _hfAppend = append;
+  function _runHFSearch() {
     if (_hfLoading) return;
     _hfLoading = true;
-    if (!_hfAppend) {
-      S.hf.seen = {}; S.hf.skip = 0; S.hf.nextCursor = ""; S.hf.loaded = 0; S.hf.done = false;
-      grid.innerHTML = '<div class="cvt-spinner"></div>';
-    } else {
-      moreBtn.disabled = true; moreBtn.textContent = "Loading\u2026";
-    }
+    grid.innerHTML = '<div class="cvt-spinner"></div>';
     var params = new URLSearchParams({
       query: S.hf.query, sort: S.hf.sort,
-      limit: String(HF_PAGE), skip: String(S.hf.skip),
+      limit: String(HF_PAGE), skip: String(((S.hf.page || 1) - 1) * HF_PAGE),
     });
-    if (S.hf.nextCursor) params.set("cursor", S.hf.nextCursor);
     if (S.hf.pipeline_tag) params.set("pipeline_tag", S.hf.pipeline_tag);
     if (S.hf.library) params.set("library", S.hf.library);
     if (S.hf.author) params.set("author", S.hf.author);
     _api("/civitai/hf-search?" + params.toString()).then(function(d) {
-      var batch = d.items || [];
-      // Pages can overlap if the index shifts between requests.
-      var fresh = batch.filter(function(m) {
-        var k = String(m.modelId || m.id || "");
-        if (!k || S.hf.seen[k]) return false;
-        S.hf.seen[k] = 1;
-        return true;
-      });
-      if (!_hfAppend) { grid.innerHTML = ""; S.hf.items = []; }
-      S.hf.items = S.hf.items.concat(fresh);
-      S.hf.loaded = S.hf.items.length;
-      S.hf.nextCursor = d.nextCursor || "";
-      S.hf.skip = d.skip || (S.hf.skip + batch.length);
-      S.hf.done = !d.hasMore || !fresh.length;
-      var frag = document.createDocumentFragment();
-      fresh.forEach(function(m) { frag.appendChild(_hfCard(m)); });
-      grid.appendChild(frag);
-      if (!S.hf.items.length) {
+      var items = d.items || [];
+      S.hf.items = items;
+      S.hf.done = !d.hasMore || !items.length;
+      grid.innerHTML = "";
+      if (!items.length) {
         grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1">No models found</div>';
+      } else {
+        var frag = document.createDocumentFragment();
+        items.forEach(function(m) { frag.appendChild(_hfCard(m)); });
+        grid.appendChild(frag);
       }
       _updateHFPager();
     }).catch(function(e) {
-      if (_hfAppend) {
-        _toast("Could not load more: " + e.message, "error");
-        S.hf.done = true;
-      } else {
-        grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ' + e.message + '</div>';
-      }
+      grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ' + e.message + '</div>';
       _updateHFPager();
     }).then(function() { _hfLoading = false; });
   }
@@ -1771,8 +1749,9 @@ function renderHF(pane) {
     S.hf.pipeline_tag = ptSel.value;
     S.hf.library = libSel.value;
     S.hf.author = authorIn.value;
+    S.hf.page = 1;
     _cache.clear();
-    _runHFSearch(false);
+    _runHFSearch();
   }
 }
 
@@ -2218,6 +2197,10 @@ function _jobIsActive(status) {
   return status === "running" || status === "queued" || status === "downloading";
 }
 
+function _jobNeedsApiKey(j) {
+  return /\b(401|403)\b/.test(String(j.error || "")) && /civitai/i.test(String(j.error || ""));
+}
+
 function _jobSubText(j, pct) {
   var subText = pct + "% \u00B7 " + _fmtBytes(j.downloaded || 0) + " / " + _fmtBytes(j.total || 0);
   if (j.speed_bps || j.speed) subText += " \u00B7 " + _fmtBytes(j.speed_bps || j.speed) + "/s";
@@ -2290,11 +2273,24 @@ function _jobRow(j) {
     return dz;
   }
 
+  // Jump straight to Settings when Civitai refused the download for auth.
+  function makeApiKeyBtn() {
+    var kb = el("button", { class: "cvt-btn ghost", title: "Add your Civitai API key in Settings",
+      style: { padding: "2px 6px", fontSize: "11px", color: "#f88", borderColor: "rgba(255,136,136,.4)" } },
+      "\uD83D\uDD11 API key");
+    kb.onclick = function() {
+      if (S.root) S.root.dispatchEvent(new CustomEvent("civitai:show-tab", { detail: "settings" }));
+    };
+    return kb;
+  }
+
   var cancelBtn = _jobIsActive(j.status) ? makeCancelBtn() : null;
   var retryBtn = _jobFailed(j.status) ? makeRetryBtn(j) : null;
+  var keyBtn = _jobNeedsApiKey(j) ? makeApiKeyBtn() : null;
   var dismissBtn = !_jobIsActive(j.status) ? makeDismissBtn(j) : null;
   var actions = el("div", { style: { display:"flex", gap:"4px", alignItems:"center", flexShrink:0 } });
   if (retryBtn) actions.appendChild(retryBtn);
+  if (keyBtn) actions.appendChild(keyBtn);
   if (cancelBtn) actions.appendChild(cancelBtn);
   if (dismissBtn) actions.appendChild(dismissBtn);
   top.appendChild(actions);
@@ -2302,6 +2298,7 @@ function _jobRow(j) {
 
   // Sub info
   var subEl = el("div", { class: "sub" }, _jobSubText(j, pct));
+  if (j.error) { subEl.title = j.error; subEl.style.color = "#f88"; }
   row.appendChild(subEl);
 
   // Progress bar
@@ -2347,6 +2344,15 @@ function _jobRow(j) {
     } else if (!failed && retryBtn) {
       if (retryBtn.parentNode) retryBtn.remove();
       retryBtn = null;
+    }
+
+    var needsKey = _jobNeedsApiKey(nj);
+    if (needsKey && !keyBtn) {
+      keyBtn = makeApiKeyBtn();
+      actions.insertBefore(keyBtn, actions.firstChild);
+    } else if (!needsKey && keyBtn) {
+      if (keyBtn.parentNode) keyBtn.remove();
+      keyBtn = null;
     }
 
     if (!active && !dismissBtn) {

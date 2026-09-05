@@ -6,6 +6,7 @@ import re
 import shutil
 import threading
 import urllib.request
+import urllib.error
 import urllib.parse
 import hashlib
 from datetime import datetime
@@ -315,6 +316,32 @@ async def model_images(request):
 
 DOWNLOAD_TASKS = {}
 
+def _with_civitai_token(url, api_key):
+    """Civitai's download endpoint takes the API key as ?token= — the
+    Authorization header alone is not always accepted."""
+    if not api_key or not isinstance(api_key, str) or "civitai" not in (url or ""):
+        return url
+    if "token=" in url:
+        return url
+    return url + ("&" if "?" in url else "?") + "token=" + api_key
+
+
+def _civitai_download_error(e):
+    """Explain Civitai's refusals instead of showing a bare HTTP code."""
+    code = getattr(e, "code", 0)
+    if code in (401, 403):
+        return ("Civitai refused this download (HTTP %d) — the creator requires you to be "
+                "logged in. Add your Civitai API key in Settings (civitai.com → Account → "
+                "API keys). Some creators block API downloads entirely, and Blocked/XXX "
+                "models also need mature content enabled on your Civitai account." % code)
+    if code == 404:
+        return ("Civitai has no download for this file (HTTP 404) — it may have been removed, "
+                "or the version needs a specific file/variant picked.")
+    if code == 429:
+        return "Civitai is rate-limiting this download (HTTP 429). Wait a little and retry."
+    return "Download failed: %s" % e
+
+
 @routes.post("/civitai/download")
 async def start_download(request):
     try:
@@ -349,7 +376,9 @@ async def start_download(request):
                 download_url = f"https://{domain}/api/download/models/{model_version_id}"
 
         if not download_url:
-            return web.json_response({"error": "Missing url or model_version_id"}, status=400)
+            return web.json_response(
+                {"error": "Nothing to download — open the model and pick a version/file first "
+                          "(no url or model_version_id was sent)."}, status=400)
 
         loop = asyncio.get_event_loop()
 
@@ -414,8 +443,10 @@ async def start_download(request):
             api_key = utils.db_manager.get_setting("civitai_api_key")
             if api_key and isinstance(api_key, str) and "civitai" in download_url:
                 req_headers["Authorization"] = f"Bearer {api_key}"
+            # The key is added to this request only — the task, and the retry
+            # payload the UI keeps, store the URL without it.
             req = urllib.request.Request(
-                download_url,
+                _with_civitai_token(download_url, api_key),
                 headers=req_headers,
             )
             with urllib.request.urlopen(req, timeout=300) as resp:
@@ -487,6 +518,10 @@ async def start_download(request):
                 await _save_metadata_and_preview(
                     model_version_id, save_path, save_metadata, save_preview, domain, file_hash
                 )
+            except urllib.error.HTTPError as e:
+                if task_id in DOWNLOAD_TASKS:
+                    DOWNLOAD_TASKS[task_id]["status"] = "error"
+                    DOWNLOAD_TASKS[task_id]["error"] = _civitai_download_error(e)
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
