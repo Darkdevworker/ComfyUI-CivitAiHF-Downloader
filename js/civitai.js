@@ -668,16 +668,16 @@ function renderBrowse(pane) {
   sb.appendChild(row2);
   sb.appendChild(baseDl);
   // ---- Content band row (PG · PG-13 · R · X · XXX) ----
-  var _bandTimer = null;
+  // Ticking a band only records the choice. Nothing searches until the
+  // Search button is pressed, so ticking several bands costs one request.
   var ratingRow = buildBandCheckboxes(S.civitai.nsfw || "", function() {
     S.civitai.nsfw = ratingRow._getVal();
-    // re-run the search shortly after the last tick (debounced)
-    if (_bandTimer) clearTimeout(_bandTimer);
-    _bandTimer = setTimeout(function() { _resetAndSearch(); }, 350);
   });
   sb.appendChild(el("div", { class: "cvt-row", style: { marginTop:"4px" } },
     el("span", { style: { fontSize:"10px", color:"var(--civ-text-mute)", marginRight:"2px" } }, "Bands:"),
-    ratingRow));
+    ratingRow,
+    el("span", { style: { fontSize:"9px", color:"var(--civ-text-mute)", opacity:".7", marginLeft:"4px" } },
+      "press Search to apply")));
   pane.appendChild(sb);
 
   var grid = el("div", { class: "cvt-grid", id: "cvt-grid" });

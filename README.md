@@ -62,7 +62,7 @@
 - **Keyboard navigation** — `/` search, `←→↑↓` navigate cards, `Enter` opens, `Esc` closes, `1-5` switch tabs, `?` shows all shortcuts
 - **Compact grid mode** — toggle via Settings or `Ctrl+C` for denser card layout
 - **Comprehensive animations** — staggered card entrances, shimmer hover effects, spring physics, smooth transitions throughout
-- **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX
+- **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX; tick the ones you want and press Search to apply them
 - **NSFW blur** — only the NSFW bands (X · XXX) are blurred, hover to reveal
 - **Responsive** — adapts to narrow sidebar widths
 - **Civitai logo** — the “C” mark is painted onto the sidebar tab (ComfyUI only accepts icon *fonts*, so the PNG is applied over the glyph) and shown in the panel tab bar

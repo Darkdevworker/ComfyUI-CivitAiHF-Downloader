@@ -3,6 +3,11 @@
  * Run with:  node tests/test_band_ui.mjs
  * Uses a tiny DOM stub so it runs anywhere — no jsdom needed.
  */
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 const registry = [];   // every stub node, so querySelectorAll can find them
 
 function makeEl(tag) {
@@ -104,6 +109,29 @@ applyBlur(pgCard, "PG");
 window.__nsfwBlurLevel = "R";
 reapplyBlur(document);
 eq(pgCard.classList.contains("cvt-blur"), false, "PG stays visible at threshold R");
+
+console.log("ticking a band never searches on its own");
+// static: the browse panel lives in civitai.js, which imports ComfyUI modules
+const panel = fs.readFileSync(path.join(here, "..", "js", "civitai.js"), "utf8");
+const bandRow = panel.slice(panel.indexOf("// ---- Content band row"),
+                            panel.indexOf("pane.appendChild(sb);"));
+function panelHas(re, label) {
+  if (re.test(bandRow)) { pass++; } else { fail++; console.log(`  x ${label} — not found: ${re}`); }
+}
+function panelHasNot(re, label) {
+  if (!re.test(bandRow)) { pass++; } else { fail++; console.log(`  x ${label} — should be gone: ${re}`); }
+}
+panelHasNot(/setTimeout/, "no debounce timer on the band row");
+panelHasNot(/_resetAndSearch/, "ticking a band does not re-run the search");
+panelHasNot(/_bandTimer/, "no debounce state left");
+panelHasNot(/_runSearch/, "no search call of any kind from the band row");
+panelHas(/S\.civitai\.nsfw = ratingRow\._getVal\(\);/, "the tick is recorded for the next search");
+panelHas(/press Search to apply/, "the row says the button applies it");
+eq((panel.match(/S\.civitai\.nsfw = ratingRow\._getVal\(\);/g) || []).length, 2,
+   "the band value is read both on tick and when a search runs");
+eq(panel.indexOf("_resetAndSearch(); }, 350)"), -1, "the old debounced call is gone");
+eq(/goBtn\.onclick = function\(\) \{ _resetAndSearch\(\); \};/.test(panel), true,
+   "the Search button still runs the search");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
