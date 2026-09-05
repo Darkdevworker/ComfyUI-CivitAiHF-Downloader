@@ -97,7 +97,8 @@ var S = {
   curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModel: "", loading: false,
     cursor: "", cursorStack: [], nextCursor: null, limit: 24,
     seen: {}, loaded: 0, total: 0 },
-  hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "" },
+  hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "",
+    seen: {}, skip: 0, nextCursor: "", loaded: 0, done: false },
   downloads: [], dlFilter: "all", local: { models: [], filter: "" },
   settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true },
   modal: null, lightbox: null,
@@ -1604,6 +1605,42 @@ function _startDl(url, name, subfolder) {
 }
 
 // ── 2. HUGGING FACE ─────────────────────────────────────────────────
+function _hfCard(m) {
+
+        var rep = m.modelId || m.id || "";
+        var ini = rep.split("/").filter(Boolean).map(function(s) { return s[0]; }).join("").toUpperCase().slice(0, 2) || "HF";
+        var totalSize = 0;
+        if (m.siblings && m.siblings.length) {
+          m.siblings.forEach(function(s) {
+            if (s.size && /\.(safetensors|ckpt|pt|bin|pth|gguf)$/i.test(s.rfilename || "")) totalSize += s.size;
+          });
+        }
+        var card = el("div", { class: "cvt-card" });
+        card.appendChild(el("div", { class: "thumb", style: { display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#3a2a5a,#1e3a5a)",color:"#fff",fontSize:"28px",fontWeight:700 } }, ini));
+        card.appendChild(el("div", { class: "body" },
+          el("div", { class: "title", style: { color:"#ff8c42" } }, rep),
+          el("div", { class: "meta" },
+            el("span", {}, "\u2B07 " + _fmtNum(m.downloads || 0)),
+            el("span", {}, "\u2764 " + _fmtNum(m.likes || 0)),
+            totalSize ? el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes(totalSize)) : null)));
+        var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, el("img", { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpUlEQVR4nO2ZvUoDQRSFv2ASBQmCjYUPIIiFYAKiYmmbN7DxAXwFX0GxshTUNIqIYGdnaSGijdj405kuKmKSkZUJjIOZrLszGyT3gwv7c+ecOcvMFrsgCMJAsgTUgGegCaiE1QSegANgMYuJ54HtFBPuVVvaIxghJ6+MEMGWjWl0DMwBxRSaRaAMnBi6bWCBANQMk8jQN0eG/l4A/e8N2zGInrxvyob+YwD9H2+bNMumG0Xr7eQdc/2HQoX0kAAxUBLAgQSIgZIADiRADJQEcCABYqAkgAMJEAMlARxIgBgoCeBRfAW40RUd/5sABWADaFnfejaBYU8eiYgjPgVcWr1mXQMzKT0S00t8DWhYfae6zGsN3ZvEIxXdxMeAfev+O7AO5HTPKvBq9RwC4/0OMA/cW/dugdlfxk8DV1bvA7DcjwB5vVHtfwO7wKhDY0Rv5rYxpqWvFbIMcGGdvwDVP2hV9Rjl0AwawKxzYDKB3gRw5tD1jm3wqZfRUArNnN7sH1kEeDPE74CKR+2K1uzoR17eiZ52HdgBSgH0S1q7rr0EQRgEvgCZsWa8d9MqpQAAAABJRU5ErkJggg==", style: { width:"16px", height:"16px", display:"block" } }));
+        bookmarkBtn.onclick = function(e) {
+          e.stopPropagation();
+          var payload = {
+            name: rep || "", model_version_id: 0, model_id: 0,
+            filename: (rep || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
+            source: "hf", repo_id: rep || "", repo_type: "model"
+          };
+          _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
+            if (r.success) _toast("Bookmarked: " + (rep || ""), "ok");
+            else _toast((r.message || "Already bookmarked"), "ok");
+          }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
+        };
+        card.appendChild(bookmarkBtn);
+    card.onclick = function() { _hfDetail(rep); };
+    return card;
+}
+
 function renderHF(pane) {
   pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
   var sb = el("div", { class: "cvt-searchbar" });
@@ -1639,62 +1676,103 @@ function renderHF(pane) {
   var grid = el("div", { class: "cvt-grid", id: "cvt-hf-grid" });
   pane.appendChild(grid);
 
+  var pager = el("div", { class: "cvt-pager" });
+  var pageInfo = el("span", { class: "page-info" }, "");
+  var moreBtn = el("button", { class: "cvt-btn ghost", style: { display: "none" } }, "Load more");
+  pager.appendChild(pageInfo); pager.appendChild(moreBtn);
+  pane.appendChild(pager);
+  var sentinel = el("div", { style: { height: "1px" } });
+  pane.appendChild(sentinel);
+
   goBtn.onclick = _srch;
   qIn.onkeydown = function(e) { if (e.key === "Enter") _srch(); };
 
+  var HF_PAGE = 30;
+  var _hfAppend = false;
+  var _hfLoading = false;
+
+  function _updateHFPager() {
+    var loaded = S.hf.loaded;
+    if (!loaded) { pageInfo.textContent = ""; moreBtn.style.display = "none"; return; }
+    pageInfo.textContent = loaded + (loaded === 1 ? " repo" : " repos") +
+      (S.hf.done ? " \u00B7 end of results" : " so far");
+    moreBtn.style.display = S.hf.done ? "none" : "";
+    moreBtn.disabled = false;
+    moreBtn.textContent = "Load more";
+  }
+
+  function _loadMoreHF() {
+    if (_hfLoading || S.hf.done) return;
+    _runHFSearch(true);
+  }
+
+  moreBtn.onclick = function() { _loadMoreHF(); };
+  if (typeof IntersectionObserver !== "undefined") {
+    pane._hfMoreObserver = new IntersectionObserver(function(entries) {
+      entries.forEach(function(en) { if (en.isIntersecting) _loadMoreHF(); });
+    }, { rootMargin: "400px 0px" });
+    pane._hfMoreObserver.observe(sentinel);
+  }
+
+  function _runHFSearch(append) {
+    if (typeof append === "boolean") _hfAppend = append;
+    if (_hfLoading) return;
+    _hfLoading = true;
+    if (!_hfAppend) {
+      S.hf.seen = {}; S.hf.skip = 0; S.hf.nextCursor = ""; S.hf.loaded = 0; S.hf.done = false;
+      grid.innerHTML = '<div class="cvt-spinner"></div>';
+    } else {
+      moreBtn.disabled = true; moreBtn.textContent = "Loading\u2026";
+    }
+    var params = new URLSearchParams({
+      query: S.hf.query, sort: S.hf.sort,
+      limit: String(HF_PAGE), skip: String(S.hf.skip),
+    });
+    if (S.hf.nextCursor) params.set("cursor", S.hf.nextCursor);
+    if (S.hf.pipeline_tag) params.set("pipeline_tag", S.hf.pipeline_tag);
+    if (S.hf.library) params.set("library", S.hf.library);
+    if (S.hf.author) params.set("author", S.hf.author);
+    _api("/civitai/hf-search?" + params.toString()).then(function(d) {
+      var batch = d.items || [];
+      // Pages can overlap if the index shifts between requests.
+      var fresh = batch.filter(function(m) {
+        var k = String(m.modelId || m.id || "");
+        if (!k || S.hf.seen[k]) return false;
+        S.hf.seen[k] = 1;
+        return true;
+      });
+      if (!_hfAppend) { grid.innerHTML = ""; S.hf.items = []; }
+      S.hf.items = S.hf.items.concat(fresh);
+      S.hf.loaded = S.hf.items.length;
+      S.hf.nextCursor = d.nextCursor || "";
+      S.hf.skip = d.skip || (S.hf.skip + batch.length);
+      S.hf.done = !d.hasMore || !fresh.length;
+      var frag = document.createDocumentFragment();
+      fresh.forEach(function(m) { frag.appendChild(_hfCard(m)); });
+      grid.appendChild(frag);
+      if (!S.hf.items.length) {
+        grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1">No models found</div>';
+      }
+      _updateHFPager();
+    }).catch(function(e) {
+      if (_hfAppend) {
+        _toast("Could not load more: " + e.message, "error");
+        S.hf.done = true;
+      } else {
+        grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ' + e.message + '</div>';
+      }
+      _updateHFPager();
+    }).then(function() { _hfLoading = false; });
+  }
+
   function _srch() {
-    grid.innerHTML = '<div class="cvt-spinner"></div>';
     S.hf.query = qIn.value;
     S.hf.sort = sortSel.value;
     S.hf.pipeline_tag = ptSel.value;
     S.hf.library = libSel.value;
     S.hf.author = authorIn.value;
-    var params = new URLSearchParams({
-      query: S.hf.query, sort: S.hf.sort,
-      limit: "30",
-    });
-    if (S.hf.pipeline_tag) params.set("pipeline_tag", S.hf.pipeline_tag);
-    if (S.hf.library) params.set("library", S.hf.library);
-    if (S.hf.author) params.set("author", S.hf.author);
-    _api("/civitai/hf-search?" + params.toString()).then(function(d) {
-      S.hf.items = d.items || [];
-      grid.innerHTML = "";
-      if (!S.hf.items.length) { grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1">No models found</div>'; return; }
-      S.hf.items.forEach(function(m) {
-        var rep = m.modelId || m.id || "";
-        var ini = rep.split("/").filter(Boolean).map(function(s) { return s[0]; }).join("").toUpperCase().slice(0, 2) || "HF";
-        var totalSize = 0;
-        if (m.siblings && m.siblings.length) {
-          m.siblings.forEach(function(s) {
-            if (s.size && /\.(safetensors|ckpt|pt|bin|pth|gguf)$/i.test(s.rfilename || "")) totalSize += s.size;
-          });
-        }
-        var card = el("div", { class: "cvt-card" });
-        card.appendChild(el("div", { class: "thumb", style: { display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#3a2a5a,#1e3a5a)",color:"#fff",fontSize:"28px",fontWeight:700 } }, ini));
-        card.appendChild(el("div", { class: "body" },
-          el("div", { class: "title", style: { color:"#ff8c42" } }, rep),
-          el("div", { class: "meta" },
-            el("span", {}, "\u2B07 " + _fmtNum(m.downloads || 0)),
-            el("span", {}, "\u2764 " + _fmtNum(m.likes || 0)),
-            totalSize ? el("span", { style: { color:"var(--civ-text-mute)" } }, _fmtBytes(totalSize)) : null)));
-        var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, el("img", { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpUlEQVR4nO2ZvUoDQRSFv2ASBQmCjYUPIIiFYAKiYmmbN7DxAXwFX0GxshTUNIqIYGdnaSGijdj405kuKmKSkZUJjIOZrLszGyT3gwv7c+ecOcvMFrsgCMJAsgTUgGegCaiE1QSegANgMYuJ54HtFBPuVVvaIxghJ6+MEMGWjWl0DMwBxRSaRaAMnBi6bWCBANQMk8jQN0eG/l4A/e8N2zGInrxvyob+YwD9H2+bNMumG0Xr7eQdc/2HQoX0kAAxUBLAgQSIgZIADiRADJQEcCABYqAkgAMJEAMlARxIgBgoCeBRfAW40RUd/5sABWADaFnfejaBYU8eiYgjPgVcWr1mXQMzKT0S00t8DWhYfae6zGsN3ZvEIxXdxMeAfev+O7AO5HTPKvBq9RwC4/0OMA/cW/dugdlfxk8DV1bvA7DcjwB5vVHtfwO7wKhDY0Rv5rYxpqWvFbIMcGGdvwDVP2hV9Rjl0AwawKxzYDKB3gRw5tD1jm3wqZfRUArNnN7sH1kEeDPE74CKR+2K1uzoR17eiZ52HdgBSgH0S1q7rr0EQRgEvgCZsWa8d9MqpQAAAABJRU5ErkJggg==", style: { width:"16px", height:"16px", display:"block" } }));
-        bookmarkBtn.onclick = function(e) {
-          e.stopPropagation();
-          var payload = {
-            name: rep || "", model_version_id: 0, model_id: 0,
-            filename: (rep || "").replace(/[^a-zA-Z0-9_-]/g,"_") + ".safetensors",
-            source: "hf", repo_id: rep || "", repo_type: "model"
-          };
-          _api("/civitai/bookmarks", { method:"POST", body:JSON.stringify(payload) }).then(function(r) {
-            if (r.success) _toast("Bookmarked: " + (rep || ""), "ok");
-            else _toast((r.message || "Already bookmarked"), "ok");
-          }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
-        };
-        card.appendChild(bookmarkBtn);
-        card.onclick = function() { _hfDetail(rep); };
-        grid.appendChild(card);
-      });
-    }).catch(function(e) { grid.innerHTML = '<div class="cvt-empty" style="grid-column:1/-1;color:#f88">Error: ' + e.message + '</div>'; });
+    _cache.clear();
+    _runHFSearch(false);
   }
 }
 

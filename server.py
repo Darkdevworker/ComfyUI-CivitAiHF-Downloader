@@ -989,11 +989,19 @@ async def hf_search(request):
         sort = request.query.get("sort", "lastModified")
         direction = request.query.get("direction", "-1")
         limit = int(request.query.get("limit", 30))
+        skip = int(request.query.get("skip", 0))
+        cursor = request.query.get("cursor", "")
         tags = request.query.get("tags", "")
         gated = request.query.get("gated", "")
 
         hf_url = "https://huggingface.co/api/models"
         params = {"search": query, "sort": sort, "direction": direction, "limit": limit}
+        # Hugging Face pages with a cursor in the Link header; `skip` is the
+        # fallback so a client can still ask for "the next N" without one.
+        if cursor:
+            params["cursor"] = cursor
+        elif skip:
+            params["skip"] = skip
         if pipeline_tag:
             params["task"] = pipeline_tag
         if library:
@@ -1015,7 +1023,19 @@ async def hf_search(request):
         )
         resp.raise_for_status()
         items = resp.json()
-        return web.json_response({"items": items, "total": len(items)})
+        next_cursor = ""
+        link = resp.headers.get("Link") or resp.headers.get("link") or ""
+        if link and 'rel="next"' in link:
+            m = re.search(r'<[^>]*[?&]cursor=([^&>\'"]+)', link)
+            if m:
+                next_cursor = urllib.parse.unquote(m.group(1))
+        return web.json_response({
+            "items": items,
+            "hasMore": bool(next_cursor) or len(items) >= limit,
+            "nextCursor": next_cursor,
+            "skip": skip + len(items),
+            "limit": limit,
+        })
     except Exception as e:
         return web.json_response({"items": [], "error": str(e)})
 

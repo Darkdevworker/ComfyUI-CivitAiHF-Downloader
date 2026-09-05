@@ -18,7 +18,7 @@
 - **Civitai** — Search by query, model type, sort order, time period, base model, and NSFW rating
 - **Hugging Face** — Search by pipeline tag, library, author, and sort order
 - **Lookup** — Resolve any Civitai URL, model ID, version ID, or SHA256 hash
-- **Cursor pagination** — Browse through results with next/previous navigation
+- **Loads every page** — results keep loading as you scroll in both grids, so a search is never capped at the first page
 
 ### 📥 Downloads
 - **One-click download** with configurable folder, subfolder, and filename
@@ -26,6 +26,11 @@
 - **SHA256 hash always saved** — every downloaded model gets its hash stored in `.civitai.json`
 - **Metadata & preview images** — optionally save alongside models
 - **Batch downloads** from both Civitai and Hugging Face
+
+### 🤗 Hugging Face Browse
+- **All matching repos, not just the first 30** — pages are appended as you scroll, de-duplicated across pages
+- Footer reports the running count (`60 repos so far` / `157 repos · end of results`)
+- Uses Hugging Face's own `Link` header cursor when present, falling back to `skip`
 
 ### 🔎 Civitai Browse
 - **All the results, not just the first page** — results keep loading as you scroll (with a "Load more" button as a fallback)

@@ -1,7 +1,8 @@
 /**
- * Paging for the Civitai browse grid: a search must be able to return more
- * than the first page of results (the grid used to show exactly `limit`
- * models and only advance when a small Prev/Next pager was clicked).
+ * Paging for the search grids (Civitai browse + Hugging Face): a search must
+ * be able to return more than the first page of results. The browse grid used
+ * to show exactly `limit` models and only advance via a small Prev/Next pager;
+ * the HF grid had no paging at all and stopped at 30 repos.
  *
  * Run with:  node tests/test_browse_paging.mjs
  *
@@ -19,6 +20,10 @@ const src = fs.readFileSync(path.join(here, "..", "js", "civitai.js"), "utf8");
 const at = src.indexOf("function renderBrowse(");
 if (at < 0) { console.error("renderBrowse() not found"); process.exit(1); }
 const browse = src.slice(at, src.indexOf("\nfunction ", at + 10));
+
+const hfAt = src.indexOf("function renderHF(");
+if (hfAt < 0) { console.error("renderHF() not found"); process.exit(1); }
+const hf = src.slice(hfAt, src.indexOf("\nfunction ", hfAt + 10));
 
 let pass = 0, fail = 0;
 function has(re, label) {
@@ -70,6 +75,25 @@ console.log("old pager removed");
 hasNot(/prevBtn/, "no Prev button left");
 hasNot(/nextBtn/, "no Next button left");
 hasNot(/pageInfo\.textContent = "Page "/, "no bare page-number readout");
+
+console.log("hugging face grid pages too");
+function hfHas(re, label) {
+  if (re.test(hf)) { pass++; } else { fail++; console.log(`  x ${label} — not found: ${re}`); }
+}
+hfHas(/function _runHFSearch\(append\)/, "the HF search takes an append flag");
+hfHas(/limit: String\(HF_PAGE\), skip: String\(S\.hf\.skip\),/, "asks for the next slice with skip");
+hfHas(/if \(S\.hf\.nextCursor\) params\.set\("cursor", S\.hf\.nextCursor\);/, "uses HF's cursor when it has one");
+hfHas(/S\.hf\.items = S\.hf\.items\.concat\(fresh\);/, "HF results accumulate");
+hfHas(/if \(!k \|\| S\.hf\.seen\[k\]\) return false;/, "HF repos already shown are skipped");
+hfHas(/S\.hf\.done = !d\.hasMore \|\| !fresh\.length;/, "stops when the API says there are no more");
+hfHas(/S\.hf\.skip = d\.skip \|\| \(S\.hf\.skip \+ batch\.length\);/, "advances the offset");
+hfHas(/fresh\.forEach\(function\(m\) \{ frag\.appendChild\(_hfCard\(m\)\); \}\);/, "appends built cards");
+hfHas(/IntersectionObserver/, "HF grid auto-loads on scroll");
+hfHas(/pane\._hfMoreObserver =/, "the HF observer is kept alive");
+hfHas(/function _loadMoreHF\(\)/, "HF has a load-more action");
+hfHas(/S\.hf\.seen = \{\}; S\.hf\.skip = 0; S\.hf\.nextCursor = ""; S\.hf\.loaded = 0; S\.hf\.done = false;/, "a new HF search resets paging");
+hfHas(/repos"\) \+\s*\(S\.hf\.done \? " \\u00B7 end of results" : " so far"\)/, "HF footer reports the running count");
+hfHas(/grid\.innerHTML = '<div class="cvt-spinner"><\/div>';/, "only a fresh HF search shows the spinner");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
