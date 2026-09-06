@@ -94,7 +94,7 @@ var _localPromptCache = {};
 window.__nsfwBlurEnabled = true;
 
 var S = {
-  curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModel: "", loading: false,
+  curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModels: [], loading: false,
     cursor: "", cursorStack: [], nextCursor: null, limit: 24,
     page: 1, total: 0 },
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "",
@@ -696,6 +696,126 @@ function closeModal() { if (S.modal) { S.modal.remove(); S.modal = null; } }
 document.addEventListener("keydown", function(e) { if (e.key === "Escape") { closeModal(); closeLightbox(); var kbOv = document.querySelector(".cvt-kb-overlay"); if (kbOv) kbOv.remove(); } });
 
 // ── 1. BROWSE ────────────────────────────────────────────────────────
+/* ── Base-model multi-select ─────────────────────────────────────────
+   Civitai takes a comma-separated baseModels list, so the filter can hold
+   several at once. Like the content-band row, ticking a box only records
+   the choice: nothing searches until the Search button is pressed, so
+   picking five base models still costs one request.                      */
+function buildBaseModelMultiSelect(selected, onChange) {
+  var picked = (selected || []).slice();
+  var pop = null;
+
+  var btn = el("button", { type: "button", class: "cvt-bm-btn",
+    title: "Filter by base model \u2014 pick as many as you like" });
+  var wrap = el("div", { class: "cvt-bm" }, btn);
+
+  function _paint() {
+    btn.textContent = !picked.length ? "Base model"
+      : picked.length === 1 ? picked[0]
+      : picked[0] + " +" + (picked.length - 1);
+    btn.classList.toggle("active", picked.length > 0);
+    btn.title = picked.length
+      ? picked.join("\n") + "\n\nPress Search to apply."
+      : "Filter by base model \u2014 pick as many as you like";
+    var countEl = pop && pop.querySelector(".cvt-bm-count");
+    if (countEl) countEl.textContent = picked.length ? picked.length + " selected" : "";
+  }
+  function _commit() { _paint(); if (typeof onChange === "function") onChange(); }
+
+  function _close() {
+    if (pop && pop.parentNode) pop.parentNode.removeChild(pop);
+    pop = null;
+    document.removeEventListener("mousedown", _outside, true);
+    document.removeEventListener("keydown", _esc, true);
+    window.removeEventListener("resize", _close, true);
+  }
+  function _outside(e) {
+    if (!pop) return;
+    if (pop.contains(e.target) || btn.contains(e.target)) return;
+    _close();
+  }
+  function _esc(e) { if (e.key === "Escape") { _close(); btn.focus(); } }
+
+  function _rows(list, needle) {
+    list.innerHTML = "";
+    var q = (needle || "").trim().toLowerCase();
+    var shown = 0;
+    CIVITAI_BASE_MODELS.forEach(function(name) {
+      if (!name) return;
+      if (q && name.toLowerCase().indexOf(q) < 0) return;
+      shown++;
+      var cb = el("input", { type: "checkbox", value: name });
+      cb.checked = picked.indexOf(name) >= 0;
+      cb.onchange = function() {
+        if (cb.checked) {
+          if (picked.indexOf(name) < 0) picked.push(name);
+        } else {
+          picked = picked.filter(function(p) { return p !== name; });
+        }
+        _commit();
+      };
+      list.appendChild(el("label", { class: "cvt-bm-item" }, cb,
+        el("span", {}, name)));
+    });
+    if (!shown) {
+      list.appendChild(el("div", { class: "cvt-bm-empty" }, "No base model matches"));
+    }
+  }
+
+  function _open() {
+    if (pop) { _close(); return; }
+    pop = el("div", { class: "cvt-bm-pop" });
+    // The panel lives inside .cvt-root, whose theme variables this popup is
+    // outside of, so carry the theme across explicitly.
+    if (S.root && S.root.classList.contains("light")) pop.classList.add("light");
+
+    var filter = el("input", { type: "text", class: "cvt-bm-filter",
+      placeholder: "Filter\u2026", autocomplete: "off" });
+    var list = el("div", { class: "cvt-bm-list" });
+    filter.oninput = function() { _rows(list, filter.value); };
+    filter.onkeydown = function(e) {
+      // Enter must not reach the search bar behind the popup.
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); _close(); }
+      if (e.key === "Escape") { e.stopPropagation(); _close(); }
+    };
+
+    var clearBtn = el("button", { type: "button", class: "cvt-bm-mini" }, "All");
+    clearBtn.title = "Clear the base-model filter (every base model matches)";
+    clearBtn.onclick = function() { picked = []; _rows(list, filter.value); _commit(); };
+    var doneBtn = el("button", { type: "button", class: "cvt-bm-mini" }, "Close");
+    doneBtn.onclick = function() { _close(); btn.focus(); };
+
+    pop.appendChild(filter);
+    pop.appendChild(list);
+    pop.appendChild(el("div", { class: "cvt-bm-foot" }, clearBtn,
+      el("span", { class: "cvt-bm-count" }), doneBtn));
+    document.body.appendChild(pop);
+    _rows(list, "");
+
+    // Position only once it is in the DOM and the height is known.
+    var r = btn.getBoundingClientRect();
+    var w = pop.offsetWidth, h = pop.offsetHeight;
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+    var top = r.bottom + 4;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+
+    document.addEventListener("mousedown", _outside, true);
+    document.addEventListener("keydown", _esc, true);
+    window.addEventListener("resize", _close, true);
+    filter.focus();
+  }
+
+  btn.onclick = function(e) { e.stopPropagation(); _open(); };
+
+  wrap._getVal = function() { return picked.slice(); };
+  wrap._setVal = function(arr) { picked = (arr || []).slice(); _paint(); };
+  wrap._close = _close;
+  _paint();
+  return wrap;
+}
+
 function renderBrowse(pane) {
   pane.innerHTML = "";   // idempotent — a re-render must never stack a second copy
   var sb = el("div", { class: "cvt-searchbar" });
@@ -717,21 +837,18 @@ function renderBrowse(pane) {
   CIVITAI_SORTS.forEach(function(s) { sortSel.appendChild(el("option", { value: s }, s)); });
   row1.appendChild(qIn); row1.appendChild(sortSel); sb.appendChild(row1);
 
-  // ---- Search row 2 (free-typeable datalist) ----
+  // ---- Search row 2 ----
   var row2 = el("div", { class: "cvt-row", style: { flexWrap:"wrap", gap:"4px", alignItems:"center" } });
   var typeSel = el("select", { id: "cvt-type", class: "cvt-select-sm", title: "Type" });
   CIVITAI_TYPES.forEach(function(t) { typeSel.appendChild(el("option", { value: t }, t || "All types")); });
   var periodSel = el("select", { id: "cvt-period", class: "cvt-select-sm", title: "Period" });
   CIVITAI_PERIODS.forEach(function(p) { periodSel.appendChild(el("option", { value: p }, p)); });
-  var baseListId = "cvt-base-list-" + Math.random().toString(36).slice(2, 8);
-  var baseIn = el("input", { type: "text", list: baseListId, placeholder: "Base model\u2026", autocomplete: "off", style: { flex:"0 0 auto", maxWidth:"120px" } });
-  var baseDl = el("datalist", { id: baseListId });
-  CIVITAI_BASE_MODELS.forEach(function(b) { if (b) baseDl.appendChild(el("option", { value: b })); });
-  baseIn.onkeydown = function(e) { if (e.key === "Enter") { _resetAndSearch(); } };
+  var baseCtl = buildBaseModelMultiSelect(S.civitai.baseModels || [], function() {
+    S.civitai.baseModels = baseCtl._getVal();
+  });
   var goBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, el("span", { class: "emoji-btn emoji-float" }, "\uD83D\uDD0D"), " Search");
-  row2.appendChild(typeSel); row2.appendChild(periodSel); row2.appendChild(baseIn); row2.appendChild(goBtn);
+  row2.appendChild(typeSel); row2.appendChild(periodSel); row2.appendChild(baseCtl); row2.appendChild(goBtn);
   sb.appendChild(row2);
-  sb.appendChild(baseDl);
   // ---- Content band row (PG · PG-13 · R · X · XXX) ----
   // Ticking a band only records the choice. Nothing searches until the
   // Search button is pressed, so ticking several bands costs one request.
@@ -817,7 +934,9 @@ function renderBrowse(pane) {
     if (needsNsfwQuery(parseBandSelection(S.civitai.nsfw))) params.set("nsfw", "true");
     if (S.civitai.query) params.set("query", S.civitai.query);
     if (S.civitai.cursor) params.set("cursor", S.civitai.cursor);
-    if (S.civitai.baseModel) params.set("baseModels", S.civitai.baseModel);
+    if (S.civitai.baseModels && S.civitai.baseModels.length) {
+      params.set("baseModels", S.civitai.baseModels.join(","));
+    }
     return params;
   }
 
@@ -832,7 +951,7 @@ function renderBrowse(pane) {
     S.civitai.nsfw = ratingRow._getVal();
     S.civitai.type = typeSel.value;
     S.civitai.period = periodSel.value;
-    S.civitai.baseModel = (baseIn.value || "").trim();
+    S.civitai.baseModels = baseCtl._getVal();
     if (S.civitai.sort === "Relevancy" && !S.civitai.query) {
       S.civitai.sort = "Highest Rated"; sortSel.value = "Highest Rated";
       _flashHint(sb, "\u26A0\uFE0F Relevancy requires a search query \u2014 switched to Highest Rated.");

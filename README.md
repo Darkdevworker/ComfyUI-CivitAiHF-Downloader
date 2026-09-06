@@ -15,7 +15,7 @@
 ## ✨ Features
 
 ### 🔍 Browse & Search
-- **Civitai** — Search by query, model type, sort order, time period, base model, and NSFW rating
+- **Civitai** — Search by query, model type, sort order, time period, base model (multi-select), and NSFW rating
 - **Hugging Face** — Search by pipeline tag, library, author, and sort order
 - **Lookup** — Resolve any Civitai URL, model ID, version ID, or SHA256 hash
 - **Page navigation** — step through results with Prev/Next in both grids; the footer shows the range and total (`Page 2 · Showing 25–48 of 57 models`)
@@ -150,7 +150,8 @@ Civitai reports the tier three different ways and all three are handled:
 
 1. Open the **CivitAI** tab in the ComfyUI sidebar
 2. Type a search query (or leave empty for top models)
-3. Select filters: model type, sort order, time period, base model, NSFW rating
+3. Select filters: model type, sort order, time period, base model (pick several at once), NSFW rating
+   Base model and the content bands only record your choice — nothing searches until you press **Search**, so picking five base models still costs one request
 4. Click **Search** (or press `Enter`)
 5. Click any model card → select version → click **Download**
 6. Switch to the **Local** tab to see your downloaded models
