@@ -56,7 +56,7 @@ def _model_roots():
         if getattr(folder_paths, "models_dir", None):
             roots.append(os.path.realpath(folder_paths.models_dir))
     except Exception:
-        pass
+        logger.debug("_model_roots: ignoring Exception", exc_info=True)
     try:
         for entry in getattr(folder_paths, "folder_names_and_paths", {}).values():
             paths = entry[0] if isinstance(entry, (list, tuple)) else entry
@@ -66,9 +66,9 @@ def _model_roots():
                 try:
                     roots.append(os.path.realpath(candidate))
                 except Exception:
-                    pass
+                    logger.debug("_model_roots: ignoring Exception", exc_info=True)
     except Exception:
-        pass
+        logger.debug("_model_roots: ignoring Exception", exc_info=True)
     seen, out = set(), []
     for r in roots:
         key = os.path.normcase(r)
@@ -363,7 +363,8 @@ async def local_preview(request):
                 return web.Response(body=img_bytes, content_type=out_ct,
                                     headers=cache_hdr)
             except Exception:
-                pass  # fall through to the original file
+                logger.debug("local_preview: ignoring Exception", exc_info=True)
+                # fall through to the original file
 
         # Conditional requests. HTTP dates go through email.utils, which
         # understands the format and the GMT zone: strptime("%Z") produced a
@@ -376,7 +377,7 @@ async def local_preview(request):
                 if since and mtime <= since.timestamp():
                     return web.Response(status=304, headers=cache_hdr)
             except (TypeError, ValueError, OverflowError):
-                pass
+                logger.debug("local_preview: ignoring (TypeError, ValueError, OverflowError)", exc_info=True)
         headers = dict(cache_hdr)
         headers["Last-Modified"] = formatdate(mtime, usegmt=True)
         return web.FileResponse(path, headers=headers)
@@ -406,6 +407,7 @@ def _prune_preview_cache():
             try:
                 st = os.stat(p)
             except OSError:
+                logger.debug("_prune_preview_cache: skipping after OSError", exc_info=True)
                 continue
             if not os.path.isfile(p):
                 continue
@@ -421,9 +423,9 @@ def _prune_preview_cache():
                 os.remove(p)
                 total -= size
             except OSError:
-                pass
+                logger.debug("_prune_preview_cache: ignoring OSError", exc_info=True)
     except Exception:
-        pass
+        logger.debug("_prune_preview_cache: ignoring Exception", exc_info=True)
 
 
 def _resize_preview(path, max_w, quality):
@@ -446,7 +448,7 @@ def _resize_preview(path, max_w, quality):
             with open(cache_path, "rb") as f:
                 return f.read(), "image/webp"
     except Exception:
-        pass
+        logger.debug("_resize_preview: ignoring Exception", exc_info=True)
 
     img = Image.open(path)
     img.load()
@@ -478,7 +480,7 @@ def _resize_preview(path, max_w, quality):
         if _preview_cache_writes % 50 == 0:
             _prune_preview_cache()
     except Exception:
-        pass
+        logger.debug("_resize_preview: ignoring Exception", exc_info=True)
     return data, content_type
 
 @routes.get("/civitai/model-versions")
@@ -746,7 +748,7 @@ async def start_download(request):
                     if task_id in DOWNLOAD_TASKS:
                         DOWNLOAD_TASKS[task_id]["hash"] = file_hash
                 except Exception:
-                    pass
+                    logger.warning("could not hash or save metadata after downloading %s", save_path, exc_info=True)
                 # Fetch and save metadata / preview after download
                 await _save_metadata_and_preview(
                     model_version_id, save_path, save_metadata, save_preview, domain, file_hash
@@ -777,7 +779,7 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, _write_json, os.path.splitext(save_path)[0] + ".civitai.json", meta)
             except Exception:
-                pass
+                logger.warning("could not save the SHA256 sidecar for %s", save_path, exc_info=True)
         return
     loop = asyncio.get_event_loop()
     try:
@@ -788,6 +790,7 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
         if not vi:
             return
     except Exception:
+        logger.warning("could not fetch version info for %s, so no metadata was saved", model_version_id, exc_info=True)
         return
 
     base = os.path.splitext(save_path)[0]
@@ -822,10 +825,10 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
                     vi["model"]["description"] = model_data.get("description", "")
                     vi["model"]["name"] = model_data.get("name", "")
             except Exception:
-                pass
+                logger.debug("could not enrich metadata with the model description", exc_info=True)
         await loop.run_in_executor(None, _write_json, meta_path, vi)
     except Exception:
-        pass
+        logger.warning("could not save metadata for %s", save_path, exc_info=True)
 
     # Download all preview images
     if save_preview:
@@ -978,7 +981,7 @@ async def _bg_local_sync():
         for mt in utils.SUPPORTED_MODEL_TYPES:
             await loop.run_in_executor(None, utils.sync_local_files_with_db, mt, True)
     except Exception:
-        pass
+        logger.debug("_bg_local_sync: ignoring Exception", exc_info=True)
 
 
 @routes.post("/civitai/rescan")
@@ -1081,9 +1084,10 @@ async def auto_tag(request):
                                             with open(preview_path, "wb") as pf:
                                                 pf.write(resp.read())
                                     except Exception:
-                                        pass
+                                        logger.warning("could not download a preview during auto-tag", exc_info=True)
                             tagged += 1
                     except Exception:
+                        logger.debug("auto_tag: skipping after Exception", exc_info=True)
                         continue
             return tagged
 
@@ -1105,6 +1109,7 @@ async def cleanup_scan(request):
                 try:
                     names = folder_paths.get_filename_list(mt)
                 except Exception:
+                    logger.debug("cleanup_scan: skipping after Exception", exc_info=True)
                     continue
                 for name in names:
                     full = folder_paths.get_full_path(mt, name)
@@ -1191,6 +1196,7 @@ async def auto_organize(request):
                     try:
                         info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(fhash)
                     except Exception:
+                        logger.debug("auto_organize: skipping after Exception", exc_info=True)
                         continue
                     if not info:
                         continue
@@ -1240,7 +1246,7 @@ async def auto_organize(request):
                                 os.rename(s, d)
                         moved += 1
                     except Exception:
-                        pass
+                        logger.debug("auto_organize: ignoring Exception", exc_info=True)
             return moved
 
         loop = asyncio.get_event_loop()
@@ -1387,7 +1393,7 @@ async def hf_lookup(request):
                         if r2.status_code < 400:
                             return web.json_response({"id": repo_id, "repo_type": rt, "gated": True})
                     except Exception:
-                        pass
+                        logger.debug("hf_lookup: ignoring Exception", exc_info=True)
                     return web.json_response({"error": "Unauthorized \u2014 set your HF token in Settings"}, status=401)
                 return web.json_response({"error": f"HTTP {e.response.status_code}"}, status=e.response.status_code)
         # All candidates 404'd
@@ -1539,6 +1545,7 @@ async def export_model_list(request):
                     if full:
                         lines.append(full)
             except Exception:
+                logger.debug("export_model_list: skipping after Exception", exc_info=True)
                 continue
         text = "\n".join(lines)
         return web.json_response({"success": True, "text": text, "count": len(lines)})
@@ -1643,7 +1650,7 @@ async def list_folders(request):
                 if entry.is_dir() and entry.name not in all_types and not entry.name.startswith('.'):
                     folders.append({"name": entry.name, "exists": True})
         except Exception:
-            pass
+            logger.debug("list_folders: ignoring Exception", exc_info=True)
         return web.json_response({"folders": [f["name"] for f in folders]})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -1754,7 +1761,7 @@ async def hf_download(request):
                     if task_id in DOWNLOAD_TASKS:
                         DOWNLOAD_TASKS[task_id]["hash"] = file_hash
                 except Exception:
-                    pass
+                    logger.warning("could not hash the downloaded file %s", dest, exc_info=True)
                 # Save metadata with hash
                 try:
                     vi = await loop.run_in_executor(
@@ -1767,7 +1774,7 @@ async def hf_download(request):
                         vi["hashes"]["SHA256"] = file_hash
                         await loop.run_in_executor(None, _write_json, meta_path, vi)
                 except Exception:
-                    pass
+                    logger.warning("could not save metadata for the downloaded file %s", dest, exc_info=True)
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
@@ -1884,7 +1891,7 @@ def _load_sidecar(path):
             with open(json_path) as f:
                 return json.load(f)
         except Exception:
-            pass
+            logger.warning("could not read the metadata sidecar %s", json_path, exc_info=True)
     return {}
 
 

@@ -11,6 +11,7 @@ ComfyUI to import) against a temporary cache directory.
 """
 
 import io
+import logging
 import os
 import shutil
 import sys
@@ -59,7 +60,7 @@ os.makedirs(CACHE, exist_ok=True)
 start = SRC.index("_PREVIEW_CACHE_MAX_FILES = 3000")
 end = SRC.index('\n@routes.get("/civitai/model-versions")')
 assert end > start, "the helper block must precede the next route"
-ns = {"os": os, "_preview_cache_dir": CACHE}
+ns = {"os": os, "logging": logging, "_preview_cache_dir": CACHE}
 exec(SRC[start:end], ns)
 resize = ns["_resize_preview"]
 prune = ns["_prune_preview_cache"]

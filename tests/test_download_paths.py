@@ -16,6 +16,7 @@ The helpers are exec'd out of server.py (it needs ComfyUI to import) against
 a stubbed folder_paths.
 """
 
+import logging
 import os
 import re
 import sys
@@ -67,7 +68,7 @@ class StubFolderPaths:
     folder_names_and_paths = {"loras": ([LORAS], {".safetensors"})}
 
 
-ns = {"os": os, "re": re, "folder_paths": StubFolderPaths}
+ns = {"os": os, "re": re, "logging": logging, "folder_paths": StubFolderPaths}
 exec(SRC[SRC.index("def _model_roots():"):SRC.index("async def _civitai_call(")], ns)
 safe_download_path = ns["_safe_download_path"]
 safe_name = ns["_safe_name"]

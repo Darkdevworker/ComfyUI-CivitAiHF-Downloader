@@ -403,7 +403,7 @@ def parse_civitai_input(value):
             try:
                 out["version_id"] = int(params["modelVersionId"][0])
             except ValueError:
-                pass
+                logger.debug("parse_civitai_input: ignoring ValueError", exc_info=True)
     return out
 
 
@@ -512,7 +512,7 @@ class CivitaiAPIUtils:
                         return None
                     return cached
                 except Exception:
-                    pass
+                    logger.debug("parse_civitai_input: ignoring Exception", exc_info=True)
         domain = _get_active_domain()
         try:
             url = f"https://{domain}/api/v1/model-versions/by-hash/{sha256_hash}"
@@ -545,7 +545,7 @@ def scan_all_supported_model_types(force=False):
             if folder_paths.get_filename_list(model_type) is not None:
                 sync_local_files_with_db(model_type, force=force)
         except Exception:
-            pass
+            logger.debug("scan_all_supported_model_types: ignoring Exception", exc_info=True)
 
 
 def update_hash_in_db(file_info):
@@ -601,7 +601,7 @@ def sync_local_files_with_db(model_type, force=False):
             if norm not in db_files or db_files[norm] != mtime:
                 files_to_hash.append({"path": full_path, "mtime": mtime})
         except Exception:
-            pass
+            logger.debug("sync_local_files_with_db: ignoring Exception", exc_info=True)
 
     if not files_to_hash:
         db_manager.set_setting(last_sync_key, time.time())
@@ -621,9 +621,9 @@ def sync_local_files_with_db(model_type, force=False):
                     if update_hash_in_db(res):
                         hashed_count += 1
             except TimeoutError:
-                pass
+                logger.debug("sync_local_files_with_db: ignoring TimeoutError", exc_info=True)
             except Exception:
-                pass
+                logger.debug("sync_local_files_with_db: ignoring Exception", exc_info=True)
 
     db_manager.set_setting(last_sync_key, time.time())
     return {"found": len(files_to_hash), "hashed": hashed_count}
@@ -868,7 +868,7 @@ def get_civitai_triggers(file_name, file_hash, force_refresh):
             try:
                 return json.loads(v["trained_words"])
             except Exception:
-                pass
+                logger.debug("get_civitai_triggers: ignoring Exception", exc_info=True)
     info = CivitaiAPIUtils.get_model_version_info_by_hash(file_hash, force_refresh=False)
     return info.get("trainedWords", []) if info and isinstance(info.get("trainedWords"), list) else []
 
@@ -978,6 +978,7 @@ def get_all_local_models_with_details(force_refresh=False):
                     if full_path and os.path.isfile(full_path):
                         name_to_hash[rel_path] = None
             except Exception:
+                logger.debug("get_all_local_models_with_details: skipping after Exception", exc_info=True)
                 continue
         for name, fhash in name_to_hash.items():
             full_path = folder_paths.get_full_path(model_type, name)
@@ -997,7 +998,7 @@ def get_all_local_models_with_details(force_refresh=False):
                     with open(json_path) as f:
                         metadata = json.load(f)
                 except Exception:
-                    pass
+                    logger.warning("could not read the metadata sidecar %s", json_path, exc_info=True)
 
             base_model = metadata.get("baseModel", "")
             creator = ""
@@ -1030,7 +1031,7 @@ def get_all_local_models_with_details(force_refresh=False):
                             "versionId": ci.get("id"),
                         }
                 except Exception:
-                    pass
+                    logger.debug("could not enrich a local model with Civitai data", exc_info=True)
 
             result.append({
                 "name": name, "type": model_type, "path": full_path,
@@ -1054,7 +1055,7 @@ def initiate_background_scan(main_loop):
             for mt in ["checkpoints", "loras"]:
                 sync_local_files_with_db(mt, force=False)
         except Exception:
-            pass
+            logger.debug("initiate_background_scan: ignoring Exception", exc_info=True)
     threading.Thread(target=_scan, daemon=True).start()
 
 
@@ -1092,7 +1093,7 @@ def band_id_from_value(value):
     try:
         return _band_id_from_number(int(float(text)))
     except (TypeError, ValueError):
-        pass
+        logger.debug("band_id_from_value: ignoring (TypeError, ValueError)", exc_info=True)
     return BAND_IDS[_BAND_STR_RANK.get(text.lower().replace(" ", "").replace("_", ""), 0)]
 
 
@@ -1126,6 +1127,7 @@ def peek_nsfw_band(model_path):
         try:
             worst = max(worst, BAND_IDS.index(_band_id_from_number(int(raw))))
         except Exception:
+            logger.debug("peek_nsfw_band: skipping after Exception", exc_info=True)
             continue
     for raw in _NSFW_STR_RE.findall(head):
         worst = max(worst, _BAND_STR_RANK.get(raw.lower(), 0))
@@ -1197,5 +1199,6 @@ def scan_local_models_direct():
                     "model_id": model_id or None,
                 })
             except Exception:
+                logger.debug("scan_local_models_direct: skipping after Exception", exc_info=True)
                 continue
     return result
