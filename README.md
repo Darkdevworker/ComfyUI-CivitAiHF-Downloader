@@ -102,7 +102,7 @@ to **blur**:
   R gets a red badge but stays visible, matching Civitai's own behaviour.
   Hovering any blurred thumbnail reveals it.
 - **Threshold** — Settings → Preferences → *Blur content rated* lets you pick
-  `Off` / `R and up` / `X and up` (default) / `XXX only`. Changing it
+  `Off` / `R and up` (default) / `X and up` / `XXX only`. Changing it
   re-renders the tab immediately.
 - **Local library** — downloaded models are categorised from their
   `.civitai.json` sidecar (only the `nsfwLevel` key is peeked at during a scan,

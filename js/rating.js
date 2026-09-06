@@ -97,7 +97,7 @@ export const BAND_BY_ID = CONTENT_BANDS.reduce(function (acc, b) {
 const BLOCKED_BIT = 32;
 
 /** Blur threshold used when the user has not chosen one yet. */
-export const DEFAULT_BLUR_THRESHOLD = "X";
+export const DEFAULT_BLUR_THRESHOLD = "R";
 
 /** Options offered in Settings (value → human label). */
 export const BLUR_THRESHOLDS = [

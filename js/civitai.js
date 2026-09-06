@@ -2626,7 +2626,7 @@ function renderSettings(pane) {
     window.__nsfwBlurEnabled = cbNsfwBlur.checked;
     if (typeof window.__cvtReapplyBlur === "function") window.__cvtReapplyBlur();
   };
-  // Which bands get blurred — Off / R+ / X+ (default) / XXX
+  // Which bands get blurred — Off / R+ (default) / X+ / XXX
   var blurSel = buildBlurThresholdSelect(window.__nsfwBlurLevel || DEFAULT_BLUR_THRESHOLD);
   blurSel.onchange = function() {
     window.__nsfwBlurLevel = blurSel.value;
@@ -2637,7 +2637,7 @@ function renderSettings(pane) {
   [[cbMeta,"\uD83D\uDCC4 Save .civitai.json metadata alongside models"],
    [cbPrev,"\uD83D\uDDBC\uFE0F Save preview images alongside models"],
    [cbHash,"\uD83D\uDD10 Verify SHA256 hash after download"],
-   [cbNsfwBlur,"\uD83D\uDE48 Blur NSFW images (X / XXX) in card grid and previews"],
+   [cbNsfwBlur,"\uD83D\uDE48 Blur NSFW images (R / X / XXX) in card grid and previews"],
    [cbCompact,"\uD83D\uDCCA Compact grid mode (smaller cards, more columns)"]].forEach(function(item) {
     prefsGroup.appendChild(el("label", { class: "cvt-settings-toggle" }, item[0], el("span", {}, item[1])));
   });

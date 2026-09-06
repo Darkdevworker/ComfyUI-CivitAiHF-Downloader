@@ -84,5 +84,21 @@ window.__nsfwBlurEnabled = false;
 eq(isBlurred("XXX"), false, "master switch disables blur");
 window.__nsfwBlurEnabled = true;
 
+console.log("what is blurred out of the box");
+const { DEFAULT_BLUR_THRESHOLD } = await import("../js/rating.js");
+const { readFileSync } = await import("node:fs");
+eq(DEFAULT_BLUR_THRESHOLD, "R", "the default threshold is R");
+window.__nsfwBlurLevel = "";            // nothing chosen in Settings yet
+eq(currentBlurThreshold(), "R", "an unset threshold falls back to R");
+eq(isBlurred("R"), true, "R is blurred without touching Settings");
+eq(isBlurred("X"), true, "X is blurred without touching Settings");
+eq(isBlurred("XXX"), true, "XXX is blurred without touching Settings");
+eq(isBlurred("PG-13"), false, "PG-13 stays visible");
+eq(isBlurred("PG"), false, "PG stays visible");
+const serverSrc = readFileSync(new URL("../server.py", import.meta.url), "utf8");
+eq(/get_setting\("nsfw_blur_level", "R"\)/.test(serverSrc), true,
+   "the server hands out the same default");
+window.__nsfwBlurLevel = "X";
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
