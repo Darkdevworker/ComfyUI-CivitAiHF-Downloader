@@ -389,8 +389,8 @@ select option { background: #111; color: #f0f0f0; }
 .cvt-card-act:hover { background: rgba(0,0,0,.88); transform: scale(1.09); }
 
 /* Active filters, as removable chips */
-.cvt-chiprow { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 2px; }
-.cvt-chip {
+.cvt-fchiprow { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 2px; }
+.cvt-fchip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 10.5px; line-height: 1; max-width: 100%;
   padding: 4px 4px 4px 8px; border-radius: 999px;
@@ -398,28 +398,28 @@ select option { background: #111; color: #f0f0f0; }
   border: 1px solid var(--civ-line-strong);
   color: var(--civ-text-dim);
 }
-.cvt-chip-k { color: var(--civ-text-mute); flex: 0 0 auto; }
-.cvt-chip b {
+.cvt-fchip-k { color: var(--civ-text-mute); flex: 0 0 auto; }
+.cvt-fchip b {
   color: var(--civ-text); font-weight: 600;
   max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.cvt-chip-x {
+.cvt-fchip-x {
   width: 15px; height: 15px; flex: 0 0 auto; padding: 0;
   border: none; border-radius: 50%; cursor: pointer;
   background: rgba(255,255,255,.14); color: var(--civ-text);
   font-size: 11px; line-height: 15px; text-align: center;
   font-family: var(--civ-font);
 }
-.cvt-chip-x:hover { background: rgba(255,255,255,.32); }
-.cvt-chip-clear {
+.cvt-fchip-x:hover { background: rgba(255,255,255,.32); }
+.cvt-fchip-clear {
   font-size: 10.5px; padding: 4px 9px; cursor: pointer;
   border-radius: 999px; border: 1px dashed var(--civ-line-strong);
   background: none; color: var(--civ-text-mute);
   font-family: var(--civ-font);
 }
-.cvt-chip-clear:hover { color: var(--civ-text); border-color: var(--civ-text-dim); }
+.cvt-fchip-clear:hover { color: var(--civ-text); border-color: var(--civ-text-dim); }
 
-    .cvt-card .meta {
+.cvt-card .meta {
   font-size: 10.5px; color: var(--civ-text-dim);
   margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
 }
@@ -1014,9 +1014,9 @@ img.nsfw:hover { filter: none; }
 .cvt-root.light .cvt-settings .group { background: rgba(0,0,0,.03); }
 .cvt-root.light .cvt-empty { background: rgba(0,0,0,.03); border-color: rgba(0,0,0,.10); color: #666; }
 .cvt-root.light .cvt-pager { background: rgba(250,250,250,.94); }
-.cvt-root.light .cvt-chip { background: rgba(0,0,0,.05); border-color: rgba(0,0,0,.12); }
-.cvt-root.light .cvt-chip-x { background: rgba(0,0,0,.11); }
-.cvt-root.light .cvt-chip-x:hover { background: rgba(0,0,0,.20); }
+.cvt-root.light .cvt-fchip { background: rgba(0,0,0,.05); border-color: rgba(0,0,0,.12); }
+.cvt-root.light .cvt-fchip-x { background: rgba(0,0,0,.11); }
+.cvt-root.light .cvt-fchip-x:hover { background: rgba(0,0,0,.20); }
 .cvt-root.light .cvt-card-act { background: rgba(255,255,255,.86); border-color: rgba(0,0,0,.14); color: #222; }
 .cvt-root.light .cvt-card-act:hover { background: #fff; }
 .cvt-root.light .cvt-theme-toggle { background: rgba(0,0,0,.05); color: #555; border-color: rgba(0,0,0,.10); }

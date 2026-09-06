@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 data/
+bookmarks.json
+download_history.json
 .env
 .preview_cache/
 __pycache__/

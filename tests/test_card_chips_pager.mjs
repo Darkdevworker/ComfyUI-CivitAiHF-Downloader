@@ -195,7 +195,7 @@ has(css, ".cvt-root.light .cvt-pager", "and the light theme gives it its own bac
 
 // ── the chips ─────────────────────────────────────────────────────────
 console.log("active filters appear as chips that can be removed");
-has(src, 'var chipRow = el("div", { class: "cvt-chiprow"', "there is a chip row");
+has(src, 'var chipRow = el("div", { class: "cvt-fchiprow"', "there is a chip row");
 has(src, 'function _renderChips() {', "rendered by a function of its own");
 has(src, "_renderChips();", "called once the results are in");
 has(src, 'if (!chips.length) { chipRow.style.display = "none"; return; }',
@@ -217,15 +217,15 @@ has(src, '"Clear all"', "and there is a way to drop the lot at once");
 has(src, "chips.length > 1", "offered only when there is more than one to clear");
 
 console.log("styling");
-for (const cls of ["cvt-chiprow", "cvt-chip", "cvt-chip-k", "cvt-chip-x",
-                   "cvt-chip-clear", "cvt-card-actions", "cvt-card-act"]) {
+for (const cls of ["cvt-fchiprow", "cvt-fchip", "cvt-fchip-k", "cvt-fchip-x",
+                   "cvt-fchip-clear", "cvt-card-actions", "cvt-card-act"]) {
   has(css, "." + cls + " {", `.${cls} is styled`);
 }
 has(css, ".cvt-card:hover .cvt-card-actions", "the actions appear when the card is hovered");
 has(css, ".cvt-card:focus-within .cvt-card-actions", "and when the keyboard reaches them");
 has(css, "pointer-events: none;", "but they ignore clicks while hidden");
 has(css, ".cvt-root.compact .cvt-card-act", "and shrink with compact mode");
-has(css, ".cvt-root.light .cvt-chip", "with a light theme for the chips too");
+has(css, ".cvt-root.light .cvt-fchip", "with a light theme for the chips too");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -17,6 +17,7 @@ from aiohttp import web
 from server import PromptServer
 
 from . import utils
+from . import history_store
 
 # ── Response cache for API calls ──────────────────────────────────────
 # Keyed by query. Every reader applies its own TTL, so entries are stored as
@@ -798,6 +799,7 @@ async def start_download(request):
             "id": task_id, "url": download_url, "filename": filename,
             "type": model_type, "progress": 0, "speed": 0,
             "status": "downloading", "path": save_path, "cancelled": False,
+            "subfolder": subfolder, "model_version_id": model_version_id,
             "started_at": time.time(),
             "retry_endpoint": "/civitai/download",
             "retry_payload": {
@@ -814,6 +816,23 @@ async def start_download(request):
             api_key = utils.db_manager.get_setting("civitai_api_key")
             if api_key and isinstance(api_key, str) and "civitai" in download_url:
                 req_headers["Authorization"] = f"Bearer {api_key}"
+
+            # Resume. A download interrupted part-way — network drop, ComfyUI
+            # restart — leaves a partial file behind, and the old behaviour
+            # was to start a 12 GB checkpoint again from zero. If the marker
+            # beside the file names the same URL and the file is genuinely
+            # short of the total, ask for the rest instead.
+            #
+            # The marker is only trusted when it matches the URL, so a
+            # different model landing on the same path can never be appended
+            # to. If the server ignores Range, we get 200 back rather than
+            # 206 and simply start over.
+            part_path = save_path + ".part.json"
+            part = _read_part(part_path)
+            resume_from = _resume_point(save_path, part, download_url)
+            if resume_from:
+                req_headers["Range"] = "bytes=%d-" % resume_from
+
             # The key is added to this request only — the task, and the retry
             # payload the UI keeps, store the URL without it.
             req = urllib.request.Request(
@@ -827,7 +846,24 @@ async def start_download(request):
                         "Civitai returned a login page instead of the model. "
                         "This model requires authentication \u2014 set a valid Civitai API key in Settings."
                     )
+                if resume_from and resp.status != 206:
+                    # The server did not honour Range, so what is on disk is
+                    # not a prefix of this response — start over rather than
+                    # splice two different files together.
+                    logger.debug("resume refused for %s (HTTP %s), starting over",
+                                 save_path, resp.status)
+                    resume_from = 0
+                    part = None
                 total = int(resp.headers.get("Content-Length", 0))
+                content_range = resp.headers.get("Content-Range", "")
+                if content_range and "/" in content_range:
+                    # "bytes 100-999/1000": the total is after the slash
+                    try:
+                        total = int(content_range.rsplit("/", 1)[1])
+                    except (IndexError, ValueError):
+                        logger.debug("unreadable Content-Range %r", content_range, exc_info=True)
+                if resume_from and part and int(part.get("total") or 0) != total:
+                    resume_from = 0
                 # Try to get real filename from Content-Disposition
                 cd = resp.headers.get("Content-Disposition", "")
                 if cd:
@@ -846,15 +882,22 @@ async def start_download(request):
                                 if task_id in DOWNLOAD_TASKS:
                                     DOWNLOAD_TASKS[task_id].update(
                                         {"filename": filename, "path": save_path})
-                downloaded = 0
+                downloaded = resume_from
+                last_mark = resume_from
                 start_t = time.time()
-                with open(save_path, "wb") as f:
+                if resume_from and task_id in DOWNLOAD_TASKS:
+                    DOWNLOAD_TASKS[task_id]["resumed_from"] = resume_from
+                # "ab" when resuming: the bytes already on disk are the
+                # beginning of this file, so they must be kept.
+                with open(save_path, "ab" if resume_from else "wb") as f:
                     while True:
                         if DOWNLOAD_TASKS.get(task_id, {}).get("cancelled"):
                             DOWNLOAD_TASKS[task_id]["status"] = "cancelled"
                             f.close()
                             if os.path.exists(save_path):
                                 os.remove(save_path)
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
                             return True
                         chunk = resp.read(8192)
                         if not chunk:
@@ -869,6 +912,23 @@ async def start_download(request):
                                 "progress": progress, "speed": speed,
                                 "downloaded": downloaded, "total": total,
                             })
+                        # Keep the marker roughly in step with the disk, so an
+                        # interruption at any point is resumable. Every 4 MB
+                        # is often enough to matter and rare enough to be free.
+                        if downloaded - last_mark >= (4 << 20):
+                            _write_part(part_path,
+                                        {"url": download_url, "total": total,
+                                         "size": downloaded})
+                            last_mark = downloaded
+                # Finished: the file is whole, so the marker is no longer
+                # needed — and leaving it would let a later, unrelated
+                # download resume onto this file.
+                if os.path.exists(part_path):
+                    try:
+                        os.remove(part_path)
+                    except Exception:
+                        logger.debug("could not clear the resume marker at %s",
+                                     part_path, exc_info=True)
             return False
 
         async def _download():
@@ -890,6 +950,21 @@ async def start_download(request):
                     )
                     if task_id in DOWNLOAD_TASKS:
                         DOWNLOAD_TASKS[task_id]["hash"] = file_hash
+                        # Civitai publishes a hash for most files. Comparing
+                        # it is the only way to catch a truncated transfer,
+                        # which otherwise looks fine until the model fails
+                        # to load.
+                        expected = await _expected_sha256(
+                            model_version_id, filename, domain)
+                        if expected:
+                            same = expected.strip().lower() == file_hash.strip().lower()
+                            DOWNLOAD_TASKS[task_id]["verified"] = "ok" if same else "mismatch"
+                            DOWNLOAD_TASKS[task_id]["hash_expected"] = expected
+                            if not same:
+                                logger.warning(
+                                    "hash mismatch for %s: downloaded %s but Civitai "
+                                    "advertises %s — the file is probably truncated",
+                                    save_path, file_hash, expected)
                 except Exception:
                     logger.warning("could not hash or save metadata after downloading %s", save_path, exc_info=True)
                 # Fetch and save metadata / preview after download
@@ -900,16 +975,47 @@ async def start_download(request):
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
                     DOWNLOAD_TASKS[task_id]["error"] = _civitai_download_error(e)
+                    _record_history(task_id, "error")
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
                     DOWNLOAD_TASKS[task_id]["error"] = str(e)
+                    _record_history(task_id, "error")
+            else:
+                _record_history(task_id, DOWNLOAD_TASKS.get(task_id, {}).get("status", "completed"))
 
         asyncio.ensure_future(_download())
         # `id` mirrors the Hugging Face route — the UI reads that field
         return web.json_response({"task_id": task_id, "id": task_id, "filename": filename})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def _expected_sha256(model_version_id, filename, domain):
+    """The SHA256 Civitai advertises for this file, or "" if it gives none.
+
+    Matched on the file name first, because a version can ship several
+    files (a fp16 and a pruned variant, say) each with its own hash — the
+    version-level hash would only match one of them.
+    """
+    if not model_version_id:
+        return ""
+    try:
+        vi = await asyncio.get_event_loop().run_in_executor(
+            None, utils.CivitaiAPIUtils.get_model_version_info_by_id,
+            int(model_version_id), domain
+        )
+    except Exception:
+        logger.debug("could not fetch the advertised hash for version %s",
+                     model_version_id, exc_info=True)
+        return ""
+    files = (vi or {}).get("files") or []
+    for f in files:
+        if isinstance(f, dict) and (f.get("name") or "") == filename:
+            return str(((f.get("hashes") or {}).get("SHA256")) or "")
+    if len(files) == 1 and isinstance(files[0], dict):
+        return str(((files[0].get("hashes") or {}).get("SHA256")) or "")
+    return ""
 
 
 async def _save_metadata_and_preview(model_version_id, save_path, save_metadata, save_preview, domain, file_hash=""):
@@ -996,6 +1102,82 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
                 loop.run_in_executor(None, _download_file, url, p)
                 for url, p in dl_tasks
             ])
+
+
+def _record_history(task_id, status):
+    """Put a finished job in the download history.
+
+    The queue clears itself, so without this there is no trace that a model
+    was ever fetched — nothing to re-download from, and no way to tell where
+    a file in the library came from.
+    """
+    task = DOWNLOAD_TASKS.get(task_id)
+    if not task:
+        return
+    path = task.get("path") or ""
+    try:
+        size = os.path.getsize(path) if path and os.path.isfile(path) else 0
+    except Exception:
+        size = 0
+    history_store.add({
+        "id": task.get("id") or task_id,
+        "source": task.get("source") or ("hf" if task_id.startswith("hf_") else "civitai"),
+        "name": task.get("filename") or "",
+        "filename": task.get("filename") or "",
+        "url": task.get("url") or "",
+        "path": path,
+        "type": task.get("type") or "",
+        "subfolder": task.get("subfolder") or "",
+        "model_version_id": task.get("model_version_id"),
+        "repo_id": task.get("hf_repo_id") or "",
+        "repo_path": task.get("hf_path") or "",
+        "status": status,
+        "size": size,
+        "hash": task.get("hash") or "",
+        "verified": task.get("verified") or "",
+        "error": task.get("error") or "",
+        "started_at": task.get("started_at") or 0,
+    })
+
+
+def _read_part(path):
+    """Resume marker left beside a partial download, or None."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _resume_point(save_path, part, url):
+    """How many bytes of `save_path` are already the start of `url`.
+
+    Returns 0 when there is nothing trustworthy to resume from. The marker is
+    only honoured when it names the same URL and the file is genuinely short
+    of the recorded total, so a partial download of one model can never be
+    appended to by a different one that lands on the same path.
+    """
+    if not part or not url or part.get("url") != url:
+        return 0
+    if not os.path.isfile(save_path):
+        return 0
+    try:
+        have = os.path.getsize(save_path)
+    except OSError:
+        return 0
+    want = int(part.get("total") or 0)
+    if 0 < have < want:
+        return have
+    return 0
+
+
+def _write_part(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        logger.debug("could not write the resume marker at %s", path, exc_info=True)
 
 
 def _write_json(path, data):
@@ -1089,6 +1271,39 @@ async def cancel_download(request):
 _local_models_cache = {"data": None, "time": 0}
 _local_cache_lock = threading.Lock()
 _LOCAL_CACHE_TTL = 30  # seconds
+
+@routes.get("/civitai/history")
+async def get_history(request):
+    """Finished downloads, newest first, whether or not the queue kept them."""
+    try:
+        items = history_store.load()
+        limit = int(request.query.get("limit", 0)) or 0
+        if limit > 0:
+            items = items[:limit]
+        return web.json_response({"items": items})
+    except Exception as e:
+        return web.json_response({"items": [], "error": str(e)})
+
+
+@routes.post("/civitai/history-clear")
+async def clear_history(request):
+    try:
+        history_store.clear()
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.post("/civitai/history-delete")
+async def delete_history(request):
+    try:
+        data = await request.json()
+        entry_id = data.get("id") or data.get("task_id") or ""
+        history_store.remove(entry_id)
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 
 @routes.get("/civitai/local-models")
 async def local_models(request):
@@ -1918,10 +2133,12 @@ async def hf_download(request):
                         await loop.run_in_executor(None, _write_json, meta_path, vi)
                 except Exception:
                     logger.warning("could not save metadata for the downloaded file %s", dest, exc_info=True)
+                _record_history(task_id, DOWNLOAD_TASKS.get(task_id, {}).get("status", "completed"))
             except Exception as e:
                 if task_id in DOWNLOAD_TASKS:
                     DOWNLOAD_TASKS[task_id]["status"] = "error"
                     DOWNLOAD_TASKS[task_id]["error"] = str(e)
+                    _record_history(task_id, "error")
 
         asyncio.ensure_future(_hf_dl())
         return web.json_response({"id": task_id, "filename": filename, "dest": dest})

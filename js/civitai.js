@@ -879,7 +879,7 @@ function renderBrowse(pane) {
   // Five controls can narrow a search and none of them said so once you
   // scrolled away from the search bar. These state what is applied to the
   // results on screen, and drop one without hunting for its control.
-  var chipRow = el("div", { class: "cvt-chiprow", style: { display: "none" } });
+  var chipRow = el("div", { class: "cvt-fchiprow", style: { display: "none" } });
   function _renderChips() {
     chipRow.innerHTML = "";
     var chips = [];
@@ -908,15 +908,15 @@ function renderBrowse(pane) {
     if (!chips.length) { chipRow.style.display = "none"; return; }
     chipRow.style.display = "";
     chips.forEach(function (c) {
-      chipRow.appendChild(el("span", { class: "cvt-chip", title: c.title || c.v },
-        el("span", { class: "cvt-chip-k" }, c.k),
+      chipRow.appendChild(el("span", { class: "cvt-fchip", title: c.title || c.v },
+        el("span", { class: "cvt-fchip-k" }, c.k),
         el("b", {}, c.v),
-        el("button", { class: "cvt-chip-x", type: "button", title: "Remove this filter",
+        el("button", { class: "cvt-fchip-x", type: "button", title: "Remove this filter",
           onclick: function (e) { e.stopPropagation(); c.clear(); _resetAndSearch(); } },
           "\u00D7")));
     });
     if (chips.length > 1) {
-      chipRow.appendChild(el("button", { class: "cvt-chip-clear", type: "button",
+      chipRow.appendChild(el("button", { class: "cvt-fchip-clear", type: "button",
         title: "Remove every filter",
         onclick: function (e) {
           e.stopPropagation();
