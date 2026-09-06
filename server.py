@@ -1802,6 +1802,9 @@ async def get_settings(request):
         "network_choice": utils.db_manager.get_setting("network_choice", "com"),
         "nsfw_blur": utils.db_manager.get_setting("nsfw_blur", True),
         "nsfw_blur_level": utils.db_manager.get_setting("nsfw_blur_level", "R"),
+        "name_template": utils.db_manager.get_setting("name_template", "") or "",
+        "refresh_after_download": utils.db_manager.get_setting("refresh_after_download", True),
+        "saved_searches": utils.db_manager.get_setting("saved_searches", []) or [],
         "theme": utils.db_manager.get_setting("theme", "dark"),
         "compact_grid": utils.db_manager.get_setting("compact_grid", False),
         "image_quality": utils.db_manager.get_setting("image_quality", "balanced"),
@@ -1815,8 +1818,12 @@ async def get_settings(request):
 async def save_settings(request):
     try:
         data = await request.json()
-        bool_keys = {"save_metadata", "save_preview", "compute_sha", "nsfw_blur", "compact_grid"}
-        str_keys = {"nsfw_default", "network_choice", "theme", "nsfw_blur_level"}
+        bool_keys = {"save_metadata", "save_preview", "compute_sha", "nsfw_blur",
+                     "compact_grid", "refresh_after_download"}
+        # name_template is saved even when empty: clearing it is how you go
+        # back to Civitai's own file names.
+        str_keys = {"nsfw_default", "network_choice", "theme", "nsfw_blur_level",
+                    "name_template"}
         for key in bool_keys:
             if key in data:
                 utils.db_manager.set_setting(key, bool(data[key]))
@@ -1835,6 +1842,10 @@ async def save_settings(request):
             utils.db_manager.set_setting("compute_sha", data["verify_sha256"])
         if "hf_token" in data:
             utils.db_manager.set_setting("hf_token", data["hf_token"])
+        if "saved_searches" in data:
+            saved = data["saved_searches"]
+            utils.db_manager.set_setting(
+                "saved_searches", saved if isinstance(saved, list) else [])
         return web.json_response({
             "success": True,
             "has_api_key": bool(utils.db_manager.get_setting("civitai_api_key")),

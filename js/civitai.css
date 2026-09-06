@@ -1019,6 +1019,57 @@ img.nsfw:hover { filter: none; }
 .cvt-root.light .cvt-fchip-x:hover { background: rgba(0,0,0,.20); }
 .cvt-root.light .cvt-card-act { background: rgba(255,255,255,.86); border-color: rgba(0,0,0,.14); color: #222; }
 .cvt-root.light .cvt-card-act:hover { background: #fff; }
+
+/* Download history */
+.cvt-hist-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 16px; padding-top: 10px;
+  border-top: 1px solid var(--civ-line);
+  font-size: 11px; color: var(--civ-text-dim); font-weight: 600;
+  flex-shrink: 0;
+}
+.cvt-hist-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 2px; border-bottom: 1px solid var(--civ-line);
+}
+.cvt-hist-row:last-child { border-bottom: none; }
+.cvt-hist-main { flex: 1; min-width: 0; }
+.cvt-hist-name {
+  font-size: 11.5px; color: var(--civ-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cvt-hist-sub {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px;
+  font-size: 10px; color: var(--civ-text-mute);
+}
+.cvt-hist-src {
+  padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--civ-line-strong); color: var(--civ-text-dim);
+}
+.cvt-hist-err { color: #f88; }
+.cvt-hist-warn { color: #f0b429; }
+.cvt-hist-acts { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* Naming templates */
+.cvt-tpl-presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.cvt-tpl-presets .cvt-btn { padding: 3px 8px; font-size: 10px; }
+.cvt-tpl-demo {
+  margin-top: 5px; padding: 5px 8px; border-radius: 5px;
+  background: rgba(255,255,255,.03); border: 1px solid var(--civ-line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px; color: var(--civ-text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Saved searches */
+.cvt-saved-row {
+  display: flex; align-items: center; gap: 4px; width: 100%;
+  margin-top: 5px; flex-wrap: wrap;
+}
+.cvt-saved-row .cvt-btn { padding: 2px 7px; font-size: 10px; flex-shrink: 0; }
+.cvt-saved-row select, .cvt-saved-row input {
+  flex: 1 1 90px; min-width: 80px; font-size: 10.5px;
+}
 .cvt-root.light .cvt-theme-toggle { background: rgba(0,0,0,.05); color: #555; border-color: rgba(0,0,0,.10); }
 .cvt-root.light .cvt-theme-toggle:hover { background: rgba(0,0,0,.10); color: #222; }
 .cvt-root.light .cvt-card:focus-visible { outline-color: rgba(50,120,220,.6); border-color: rgba(50,120,220,.4); box-shadow: 0 0 0 4px rgba(50,120,220,.10), 0 8px 30px rgba(0,0,0,.10); }

@@ -434,6 +434,9 @@ function buildUI() {
     window.__nsfwBlurEnabled = S.settings.nsfwBlur;
     S.settings.imageQuality = cfg.image_quality || "balanced";
     _setImageQuality(S.settings.imageQuality);
+    S.settings.nameTemplate = cfg.name_template || "";
+    S.settings.savedSearches = cfg.saved_searches || [];
+    S.settings.refreshAfterDownload = cfg.refresh_after_download !== false;
   }).catch(function(){});
 
   return root;
@@ -926,6 +929,113 @@ function renderBrowse(pane) {
     }
   }
   sb.appendChild(chipRow);
+
+  // ---- Saved searches ----
+  // A good search is a lot of clicks to rebuild. This keeps the ones worth
+  // keeping; the definition is stored server-side so it survives a reload.
+  var savedRow = el("div", { class: "cvt-saved-row" });
+  var savedSel = el("select", { title: "Saved searches" });
+  var nameIn = el("input", { type: "text", placeholder: "Name this search\u2026",
+    style: { display: "none" } });
+  var delSavedBtn = el("button", { class: "cvt-btn ghost", title: "Delete the selected search" }, "\u00D7");
+
+  function _currentSearchDef() {
+    return {
+      query: qIn.value.trim(),
+      type: typeSel.value,
+      sort: sortSel.value,
+      period: periodSel.value,
+      creator: userIn.value.trim(),
+      base_models: baseCtl._getVal ? baseCtl._getVal() : "",
+      // The band row serialises to a string like "PG,X"; it is the single
+      // source of truth for S.civitai.nsfw, so there is no second field.
+      rating: ratingRow._getVal ? ratingRow._getVal() : "",
+    };
+  }
+
+  function _applySearchDef(d) {
+    qIn.value = d.query || "";
+    typeSel.value = d.type || "";
+    sortSel.value = d.sort || "models_v5";
+    periodSel.value = d.period || "AllTime";
+    userIn.value = d.creator || "";
+    if (baseCtl._setVal) baseCtl._setVal(d.base_models || []);
+    if (ratingRow._setVal) ratingRow._setVal(d.rating || "");
+    S.civitai.nsfw = ratingRow._getVal ? ratingRow._getVal() : "";
+    _renderChips();
+    _resetAndSearch();
+  }
+
+  function _saveSearchDef(name) {
+    var existing = S.settings.savedSearches || [];
+    var replacing = existing.some(function(s2) { return s2.name === name; });
+    var list = existing.filter(function(s2) { return s2.name !== name; });
+    list.push({ name: name, def: _currentSearchDef() });
+    S.settings.savedSearches = list;
+    _api("/civitai/settings", { method: "POST",
+      body: JSON.stringify({ saved_searches: list }) }).then(function() {
+      _renderSaved();
+      savedSel.value = name;   // keep it selected, so it can be removed
+      _toast((replacing ? "Updated search: " : "Search saved: ") + name, "ok");
+    }).catch(function(e) { _toast("Save failed: " + e.message, "error"); });
+  }
+
+  function _renderSaved() {
+    var list = S.settings.savedSearches || [];
+    savedSel.innerHTML = "";
+    savedSel.appendChild(el("option", { value: "" }, "Saved searches (" + list.length + ")"));
+    list.forEach(function(s2) {
+      savedSel.appendChild(el("option", { value: s2.name }, s2.name));
+    });
+    delSavedBtn.style.display = list.length ? "" : "none";
+  }
+
+  // The selection is deliberately left in place after applying, so the row
+  // shows which search is loaded and the × has something to remove.
+  savedSel.onchange = function() {
+    var nm = savedSel.value;
+    if (!nm) return;
+    var found = (S.settings.savedSearches || []).filter(function(s2) { return s2.name === nm; })[0];
+    delSavedBtn.title = "Delete \\u201C" + nm + "\\u201D";
+    if (found) _applySearchDef(found.def || found);
+  };
+  delSavedBtn.onclick = function() {
+    var nm = savedSel.value;
+    if (!nm) { _toast("Pick a saved search first", "error"); return; }
+    var list = (S.settings.savedSearches || []).filter(function(s2) { return s2.name !== nm; });
+    S.settings.savedSearches = list;
+    _api("/civitai/settings", { method: "POST",
+      body: JSON.stringify({ saved_searches: list }) }).then(function() {
+      _renderSaved();
+      delSavedBtn.title = "Delete the selected search";
+      _toast("Removed: " + nm, "ok");
+    }).catch(function(e) { _toast("Remove failed: " + e.message, "error"); });
+  };
+  var saveSearchBtn = el("button", { class: "cvt-btn ghost", title: "Save the current search" }, "\u2605 Save");
+  saveSearchBtn.onclick = function() {
+    if (nameIn.style.display === "none") {
+      nameIn.style.display = "";
+      nameIn.focus();
+      return;
+    }
+    var nm = nameIn.value.trim();
+    if (!nm) { nameIn.focus(); return; }
+    _saveSearchDef(nm);
+    nameIn.value = "";
+    nameIn.style.display = "none";
+  };
+  nameIn.onkeydown = function(e) {
+    if (e.key === "Enter") { e.preventDefault(); saveSearchBtn.click(); }
+    if (e.key === "Escape") { nameIn.value = ""; nameIn.style.display = "none"; }
+  };
+
+  savedRow.appendChild(saveSearchBtn);
+  savedRow.appendChild(nameIn);
+  savedRow.appendChild(savedSel);
+  savedRow.appendChild(delSavedBtn);
+  sb.appendChild(savedRow);
+  _renderSaved();
+
   pane.appendChild(sb);
 
   var grid = el("div", { class: "cvt-grid", id: "cvt-grid" });
@@ -1189,6 +1299,14 @@ function _quickDownload(m, version, file) {
     metadata_only: false,
     subfolder: _sanitizeModelName(m.name || "", 50),
   };
+  // One-click downloads honour the naming template too, so a card and the
+  // detail modal put the same file in the same place.
+  var tplPath = _templateToPath(S.settings.nameTemplate || "",
+                                _nameContext(m, version, file));
+  if (tplPath) {
+    if (tplPath.subfolder) body.subfolder = tplPath.subfolder;
+    if (tplPath.filename) body.filename = tplPath.filename;
+  }
   _api("/civitai/download", { method: "POST", body: JSON.stringify(body) }).then(function (job) {
     _toast("Queued: " + (job.filename || job.name || m.name || "download"), "ok");
     _ensureDlPolling();
@@ -1445,6 +1563,11 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
       var idx = parseInt(fSel.value || "0", 10);
       var f = vfiles[idx] || {};
       var fnameIn = fnameLbl.querySelector("input");
+      // A naming template decides the name outright; otherwise keep whatever
+      // the user typed and fall back to the file's own name.
+      var path = _templateToPath(S.settings.nameTemplate || "",
+                                 _nameContext(model, v, f));
+      if (path) { if (fnameIn) fnameIn.value = path.filename; return; }
       if (fnameIn && !fnameIn.value.trim()) {
         fnameIn.value = f.name || "";
       }
@@ -1486,7 +1609,11 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     // Update subfolder auto-name from the file name (no extension)
     var primaryFile = vfiles.find(function(f) { return f.primary; }) || vfiles[0] || {};
     autoModelName = primaryFile.name ? _sanitizeModelName(primaryFile.name.replace(/\.[^.]+$/, ""), 80) : _sanitizeModelName(v.name || model.name || "", 50);
-    if (autoCb.checked) { subIn.value = autoModelName; }
+    if (autoCb.checked) {
+      var tplPath = _templateToPath(S.settings.nameTemplate || "",
+                                    _nameContext(model, v, primaryFile));
+      subIn.value = tplPath ? tplPath.subfolder : autoModelName;
+    }
   }
 
   vSel.onchange = function() {
@@ -2385,7 +2512,233 @@ function _hfDetail(repoIdOrData, repoType) {
   }).catch(function(e) { left.innerHTML = '<div class="cvt-empty">Error: ' + e.message + '</div>'; });
 }
 
+/* ── Naming templates ──────────────────────────────────────────────────
+   Downloading a handful of models by hand is fine. Downloading a hundred
+   leaves a folder with no shape to it. A template decides where things
+   land: "{creator}/{model}/{version}" gives one folder per creator and a
+   file named after the version, without touching anything by hand. Every
+   piece is sanitised, so a creator called "AC/DC" cannot escape the folder
+   it is meant to be in. */
+var NAME_TEMPLATE_VARS = ["model", "creator", "version", "base_model", "type",
+                          "model_id", "version_id", "filename", "ext"];
+
+function _safePathPart(value) {
+  return String(value == null ? "" : value)
+    .replace(/[\\/:*?"<>|]+/g, " ")
+    .replace(/[\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[.\s]+/, "")
+    .slice(0, 80)
+    .trim();
+}
+
+function _resolveNameTemplate(tpl, ctx) {
+  var out = String(tpl || "");
+  if (!out) return "";
+  Object.keys(ctx || {}).forEach(function (k) {
+    out = out.split("{" + k + "}").join(_safePathPart(ctx[k]));
+  });
+  out = out.replace(/\{[^}]*\}/g, "")            // placeholders we cannot fill
+           .replace(/\/{2,}/g, "/")
+           .replace(/\s*\/\s*/g, "/")
+           .replace(/^\/+|\/+$/g, "");
+  return out.trim();
+}
+
+/**
+ * Turn a template plus a model into the folder and file name to save as.
+ * Returns null when no template is set, so callers can fall back to the
+ * name Civitai supplied.
+ */
+function _templateToPath(tpl, ctx) {
+  var rel = _resolveNameTemplate(tpl, ctx);
+  if (!rel) return null;
+  var ext = String((ctx && ctx.ext) || "").replace(/^\.+/, "");
+  var cut = rel.lastIndexOf("/");
+  var sub = cut >= 0 ? rel.slice(0, cut) : "";
+  var base = cut >= 0 ? rel.slice(cut + 1) : rel;
+  if (ext && base) {
+    var esc = ext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp("\\." + esc + "$", "i").test(base)) base = base + "." + ext;
+  }
+  if (!base) return null;
+  return { subfolder: sub, filename: base };
+}
+
+function _nameContext(model, version, file) {
+  var v = version || {};
+  var fname = (file && file.name) || "";
+  var ext = fname.indexOf(".") >= 0 ? fname.split(".").pop() : "";
+  return {
+    model: (model && model.name) || v.name || "",
+    creator: (model && model.creator && model.creator.username) || "",
+    version: v.name || "",
+    base_model: v.baseModel || (v.model && v.model.baseModel) || "",
+    type: (model && model.type) || "",
+    model_id: (model && model.id) || (v.modelId) || "",
+    version_id: v.id || "",
+    filename: fname.replace(/\.[^.]+$/, ""),
+    ext: ext || "safetensors",
+  };
+}
+
+// A plausible model, so the settings page can show what a template will do
+// without the user having to download something to find out.
+var NAME_TEMPLATE_SAMPLE = {
+  model: { name: "DreamShaper XL", type: "Checkpoint", id: 12345,
+           creator: { username: "Lykon" } },
+  version: { id: 98765, name: "v2.0 Lightning", baseModel: "SDXL 1.0" },
+  file: { name: "dreamshaperXL_v20Lightning.safetensors" },
+};
+
+function _nameTemplatePreview(tpl) {
+  var ctx = _nameContext(NAME_TEMPLATE_SAMPLE.model, NAME_TEMPLATE_SAMPLE.version,
+                         NAME_TEMPLATE_SAMPLE.file);
+  var path = _templateToPath(tpl, ctx);
+  if (!path) return "Civitai's own file name, in a folder named after the model.";
+  return "models/" + (path.subfolder ? path.subfolder + "/" : "") + path.filename;
+}
+
 // ── 3. DOWNLOADS ────────────────────────────────────────────────────
+
+var _dlSeenDone = {};      // finished jobs we have already reacted to
+var _dlSeenInit = false;   // the first poll must not "discover" old jobs
+var _dlRefreshTimer = null;
+var _dlPendingRefresh = false;  // a completed job is waiting to be announced
+
+/**
+ * ComfyUI caches its model lists, so a file that has just landed does not
+ * appear in any dropdown until they are refreshed. Refreshing here means a
+ * download is usable the moment it finishes, rather than after a page
+ * reload or a trip to the Refresh button.
+ */
+function _refreshComfyUIModels() {
+  try {
+    if (typeof app !== "undefined" && app &&
+        typeof app.refreshComboInNodes === "function") {
+      app.refreshComboInNodes();
+      return true;
+    }
+  } catch (e) {
+    // An older frontend without the method is not an error worth showing.
+  }
+  return false;
+}
+
+function _noteFinishedJobs(jobs, quiet) {
+  var landed = false;
+  jobs.forEach(function (j) {
+    if (_jobIsActive(j.status)) return;
+    var key = String(j.id) + ":" + j.status;
+    if (_dlSeenDone[key]) return;
+    _dlSeenDone[key] = true;
+    landed = true;
+    // Only a successful download puts a new file in ComfyUI's lists; a
+    // failure is still worth recording in the history.
+    if (!quiet && j.status === "completed") _dlPendingRefresh = true;
+  });
+  if (!landed) return;
+  // Several jobs often land within a second of each other, so do this once
+  // for the batch rather than once per file.
+  if (_dlRefreshTimer) clearTimeout(_dlRefreshTimer);
+  _dlRefreshTimer = setTimeout(function () {
+    _dlRefreshTimer = null;
+    if (_dlPendingRefresh && S.settings.refreshAfterDownload !== false) {
+      _refreshComfyUIModels();
+    }
+    _dlPendingRefresh = false;
+    _renderHistory();
+  }, 400);
+}
+
+// ── Download history ────────────────────────────────────────────────
+// The queue clears itself, so a finished download otherwise leaves no trace
+// of having happened. This is the record of what was fetched, and enough to
+// fetch it again.
+var _historyEl = null;
+
+function _fmtWhen(ts) {
+  if (!ts) return "";
+  var d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return "";
+  var ago = Date.now() / 1000 - ts;
+  if (ago < 90) return "just now";
+  if (ago < 3600) return Math.round(ago / 60) + "m ago";
+  if (ago < 86400) return Math.round(ago / 3600) + "h ago";
+  if (ago < 604800) return Math.round(ago / 86400) + "d ago";
+  return d.toLocaleDateString();
+}
+
+function _redownloadFromHistory(h) {
+  var body = {
+    url: h.url || "",
+    model_version_id: h.model_version_id || 0,
+    save_as: h.type || "",
+    filename: h.filename || "",
+    subfolder: h.subfolder || "",
+    overwrite: false,
+    save_metadata: !!S.settings.saveMeta,
+    save_preview: !!S.settings.savePrev,
+    metadata_only: false,
+  };
+  _api("/civitai/download", { method: "POST", body: JSON.stringify(body) }).then(function (job) {
+    _toast("Queued again: " + (job.filename || h.filename || "download"), "ok");
+    _ensureDlPolling();
+  }).catch(function (e) { _toast("Download failed: " + e.message, "error"); });
+}
+
+function _historyRow(h, onChange) {
+  var row = el("div", { class: "cvt-hist-row" });
+  row.appendChild(el("div", { class: "cvt-hist-main" },
+    el("div", { class: "cvt-hist-name", title: h.path || "" },
+      h.filename || h.name || "?"),
+    el("div", { class: "cvt-hist-sub" },
+      el("span", { class: "cvt-hist-src" }, h.source === "hf" ? "HF" : "Civitai"),
+      el("span", {}, _fmtWhen(h.finished_at)),
+      h.size ? el("span", {}, _fmtBytes(h.size)) : null,
+      (h.status === "error")
+        ? el("span", { class: "cvt-hist-err", title: h.error || "" }, "failed")
+        : null,
+      (h.verified === "mismatch")
+        ? el("span", { class: "cvt-hist-warn",
+            title: "The file did not match the hash Civitai published — it may be truncated" },
+            "hash mismatch")
+        : null)));
+  var acts = el("div", { class: "cvt-hist-acts" });
+  if (h.source !== "hf" && (h.url || h.model_version_id)) {
+    acts.appendChild(el("button", { class: "cvt-btn-xs", title: "Download this again",
+      onclick: function () { _redownloadFromHistory(h); } }, "\u21BB"));
+  }
+  acts.appendChild(el("button", { class: "cvt-btn-xs", title: "Forget this entry",
+    onclick: function () {
+      _api("/civitai/history-delete", { method: "POST", body: JSON.stringify({ id: h.id }) })
+        .then(function () { if (onChange) onChange(); })
+        .catch(function (e) { _toast("Could not remove: " + e.message, "error"); });
+    } }, "\u00D7"));
+  row.appendChild(acts);
+  return row;
+}
+
+function _renderHistory() {
+  if (!_historyEl || !document.body.contains(_historyEl)) return;
+  _apiFresh("/civitai/history?limit=60").then(function (d) {
+    _historyEl.innerHTML = "";
+    var items = d.items || [];
+    if (!items.length) {
+      _historyEl.appendChild(el("div", { class: "cvt-empty" },
+        "Nothing here yet. Finished downloads are listed once the queue forgets them."));
+      return;
+    }
+    items.forEach(function (h) {
+      _historyEl.appendChild(_historyRow(h, _renderHistory));
+    });
+  }).catch(function (e) {
+    _historyEl.innerHTML = "";
+    _historyEl.appendChild(el("div", { class: "cvt-empty" }, "Error: " + e.message));
+  });
+}
+
 var _dlTimer = null;
 var _dlPolling = false;
 var _dlListEl = null;
@@ -2463,6 +2816,26 @@ function renderDownloads(pane) {
 
   _dlListEl = el("div");
   pane.appendChild(_dlListEl);
+
+  // ---- History ----
+  var histHead = el("div", { class: "cvt-hist-head" });
+  histHead.appendChild(el("span", {}, "\uD83D\uDDD3 History"));
+  var histClear = el("button", { class: "cvt-btn ghost" }, "Clear history");
+  histClear.onclick = function () {
+    histClear.disabled = true;
+    _api("/civitai/history-clear", { method: "POST", body: JSON.stringify({}) })
+      .then(function () { _toast("History cleared", "ok"); _renderHistory(); })
+      .catch(function (e) { _toast("Clear failed: " + e.message, "error"); })
+      .then(function () { histClear.disabled = false; });
+  };
+  histHead.appendChild(histClear);
+  pane.appendChild(histHead);
+
+  _historyEl = el("div");
+  pane.appendChild(_historyEl);
+  _renderHistory();
+
+  _dlSeenInit = false;
   _pollDl();
 }
 
@@ -2514,6 +2887,16 @@ function _fmtDuration(sec) {
   return h + "h " + (m % 60) + "m";
 }
 
+/**
+ * Save one or two download preferences without touching the rest of the
+ * settings form. The settings page caches its response, so drop it.
+ */
+function _saveDownloadPrefs(patch) {
+  _cache.del("/civitai/settings");
+  _api("/civitai/settings", { method: "POST", body: JSON.stringify(patch) })
+    .catch(function(e) { _toast("Could not save: " + e.message, "error"); });
+}
+
 function _apiFresh(path, opts) {
   _cache.del(path);
   return _api(path, opts);
@@ -2530,6 +2913,8 @@ function _pollDl() {
   _apiFresh("/civitai/downloads").then(function(d) {
     if (!_dlListEl || !document.body.contains(_dlListEl)) return;
     S.downloads = d.items || [];
+    _noteFinishedJobs(S.downloads, !_dlSeenInit);
+    _dlSeenInit = true;
 
     // Adaptive heartbeat: stop polling if no active jobs or tab hidden
     _activeJobs = S.downloads.filter(function(j) { return _jobIsActive(j.status); }).length;
@@ -3071,6 +3456,69 @@ function renderSettings(pane) {
   [{v:"civitai.com",l:"civitai.com (default)"},{v:"civitai.red",l:"civitai.red (mirror)"},{v:"civitai.work",l:"civitai.work (mirror)"}].forEach(function(b) { baseSel.appendChild(el("option", { value: b.v }, b.l)); });
   netGroup.appendChild(baseSel);
   s.appendChild(netGroup);
+
+  // Downloads: where files go, and what happens once they land
+  s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\u2B07\uFE0F Downloads"));
+  var dlGroup = el("div", { class: "group" });
+
+  var tplIn = el("input", { type: "text", placeholder: "e.g. {creator}/{model}/{version}" });
+  tplIn.value = S.settings.nameTemplate || "";
+  var tplPrev = el("div", { class: "cvt-settings-hint" }, _nameTemplatePreview(tplIn.value));
+  tplIn.oninput = function() { tplPrev.textContent = _nameTemplatePreview(tplIn.value); };
+  dlGroup.appendChild(el("div", { class: "cvt-settings-row" },
+    el("span", { class: "cvt-settings-label" }, "\uD83D\uDCC2 Naming template")));
+  dlGroup.appendChild(tplIn);
+
+  var tplPresets = el("div", { class: "cvt-tpl-presets" });
+  [{ v: "{creator}/{model}/{version}", l: "By creator" },
+   { v: "{type}/{model}/{version}", l: "By type" },
+   { v: "{base_model}/{model}/{version}", l: "By base model" },
+   { v: "{model}/{version}", l: "By model" },
+  ].forEach(function(p) {
+    tplPresets.appendChild(el("button", { class: "cvt-btn ghost", onclick: function() {
+      tplIn.value = p.v;
+      tplPrev.textContent = _nameTemplatePreview(p.v);
+      S.settings.nameTemplate = p.v;
+      _saveDownloadPrefs({ name_template: p.v });
+    } }, p.l));
+  });
+  tplPresets.appendChild(el("button", { class: "cvt-btn ghost", onclick: function() {
+    tplIn.value = "";
+    tplPrev.textContent = _nameTemplatePreview("");
+    S.settings.nameTemplate = "";
+    _saveDownloadPrefs({ name_template: "" });
+  } }, "None"));
+  dlGroup.appendChild(tplPresets);
+  dlGroup.appendChild(el("div", { class: "cvt-tpl-demo" }, tplPrev));
+  dlGroup.appendChild(el("div", { class: "cvt-settings-hint" },
+    "Where downloads land. Placeholders: " + NAME_TEMPLATE_VARS.map(function(k) {
+      return "{" + k + "}";
+    }).join(" ") + ". Everything before the last / becomes the folder, the rest " +
+    "the file name; the extension is kept automatically. Saved as you type."));
+  var tplSaveTimer = null;
+  tplIn.onchange = function() {
+    S.settings.nameTemplate = tplIn.value;
+    if (tplSaveTimer) clearTimeout(tplSaveTimer);
+    tplSaveTimer = setTimeout(function() {
+      tplSaveTimer = null;
+      _saveDownloadPrefs({ name_template: tplIn.value });
+    }, 400);
+  };
+
+  var cbRefresh = el("input", { type: "checkbox", checked: S.settings.refreshAfterDownload !== false });
+  cbRefresh.onchange = function() {
+    S.settings.refreshAfterDownload = cbRefresh.checked;
+    _saveDownloadPrefs({ refresh_after_download: cbRefresh.checked });
+  };
+  dlGroup.appendChild(el("div", { class: "cvt-settings-row",
+      style: { marginTop: "6px", justifyContent: "flex-start", gap: "8px" } },
+    cbRefresh, el("span", { class: "cvt-settings-label" },
+      "Refresh ComfyUI's model lists after a download")));
+  dlGroup.appendChild(el("div", { class: "cvt-settings-hint" },
+    "ComfyUI caches its model lists, so a file that has just landed does not " +
+    "appear in any dropdown until they are refreshed. On by default."));
+
+  s.appendChild(dlGroup);
 
   // Quick Actions
   s.appendChild(el("div", { class: "cvt-settings-section-title" }, "\u26A1 Quick Actions"));

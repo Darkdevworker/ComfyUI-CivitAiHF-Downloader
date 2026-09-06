@@ -87,6 +87,9 @@ const toasts = [];
 const posts = [];
 const code = [
   slice("function el(tag, attrs, ...children) {", "\nconst CIVITAI_TYPES"),
+  // the naming-template helpers, so the card's one-click download can be
+  // driven both with and without a template configured
+  slice("/* ── Naming templates", "// ── 3. DOWNLOADS ─"),
   slice("function _quickDownload(m, version, file) {", "\n// ── Detail Modal ──"),
   "let __toasts = [], __posts = [];",
   "function _toast(msg, kind) { __toasts.push([msg, kind]); }",
@@ -107,11 +110,13 @@ const code = [
   "}",
   "return { _card: _card, _quickDownload: _quickDownload,",
   "         toasts: () => __toasts, posts: () => __posts,",
+  "         setTemplate: function (v) { S.settings.nameTemplate = v; },",
   "         reset: () => { __toasts = []; __posts = []; } };",
 ].join("\n");
 
 const made = new Function("document", "Node", code)(shimDocument, ShimEl);
-const { _card, _quickDownload, toasts: seenToasts, posts: seenPosts, reset } = made;
+const { _card, _quickDownload, toasts: seenToasts, posts: seenPosts, reset,
+        setTemplate } = made;
 
 // _api is stubbed with a resolved promise, so its .then runs on a microtask
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -159,6 +164,24 @@ eq(body.save_metadata, true, "honouring the metadata setting");
 eq(body.save_preview, false, "and the preview setting");
 await flush();
 ok(/^Queued/.test(seenToasts()[0][0]), "and the user is told it was queued");
+
+console.log("  a naming template redirects the one-click download too");
+reset();
+setTemplate("{creator}/{filename}");
+actions.children[1].onclick({ stopPropagation() {} });
+eq(seenPosts().length, 1, "one request went out");
+eq(seenPosts()[0][1].subfolder, "Marlosart",
+   "the folder comes from the template, not the model name");
+eq(seenPosts()[0][1].filename, "naruto.safetensors",
+   "the file name keeps its extension");
+eq(seenPosts()[0][1].save_as, "loras", "and the target folder type is untouched");
+reset();
+setTemplate("");
+actions.children[1].onclick({ stopPropagation() {} });
+eq(seenPosts()[0][1].subfolder, "Hinata_Hyuga/_Naruto",
+   "clearing the template goes back to the old behaviour");
+await flush();
+reset();
 
 console.log("  a model with no file says so instead of queueing nothing");
 reset();
