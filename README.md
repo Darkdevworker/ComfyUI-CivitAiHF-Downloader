@@ -35,7 +35,7 @@
 - The server follows Hugging Face's `Link` header cursor when it has one, falling back to `skip`
 
 ### 🔎 Civitai Browse
-- **All the results, not just the first page** — results keep loading as you scroll (with a "Load more" button as a fallback)
+- **All the results, not just the first page** — step through them with Prev/Next; a page replaces the grid and jumps back to the top
 - Footer shows **"Page 2 · Showing 25–48 of 57 models"** so you can tell how much Civitai actually has
 - Flags when Civitai is excluding adult models (`· adult hidden`) — tick X / XXX in the Bands row to include them
 
@@ -66,7 +66,7 @@
 - **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX; tick the ones you want (or hit **All** for every tier, including adult) and press Search to apply them
 - **Find a creator's models** — type a Civitai username in the *Creator* field, or click any creator's name on a card or in the detail view to filter to just their models
 - **Fast image loading** — grids lazy-load their thumbnails, previews are re-encoded to WebP on the fly, and the lightbox shows a cached placeholder while the full view downloads. Settings → *Image quality* picks **Data saver** (~12 KB per card, ~52 KB per lightbox image) or **High** (~43 KB / ~277 KB); the untouched original is always one click away
-- **NSFW blur** — only the NSFW bands (X · XXX) are blurred, hover to reveal
+- **NSFW blur** — R / X / XXX are blurred by default (PG and PG-13 stay visible), hover to reveal; the threshold is configurable in Settings
 - **Responsive** — adapts to narrow sidebar widths
 - **Civitai logo** — the “C” mark is painted onto the sidebar tab (ComfyUI only accepts icon *fonts*, so the PNG is applied over the glyph) and shown in the panel tab bar
 
