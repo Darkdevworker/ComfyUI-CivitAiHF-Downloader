@@ -57,7 +57,7 @@ ok("_cached_api_get" not in JS, "and nothing in the JS called it either")
 print("but the cache it guarded is still in use, and now bounded")
 check(SRC, "_api_cache", "the cache survives")
 check(SRC, 'cached = _api_cache.get(cache_key)', "the search route reads it")
-check(SRC, "_api_cache_put(cache_key, data)", "and writes through the bounded helper")
+check(SRC, "_api_cache_put(cache_key, payload)", "and writes through the bounded helper")
 
 ns = {"time": time}
 exec(SRC[SRC.index("_api_cache = {}"):SRC.index('logger = logging.getLogger(')], ns)

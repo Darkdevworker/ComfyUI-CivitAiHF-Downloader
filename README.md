@@ -48,6 +48,7 @@
 ### 📂 Local Model Manager
 - **Auto-scan** all 29 ComfyUI model folder types
 - **Card grid** with preview images, model type, base model, and size
+- **Full pages** — Civitai has no per-tier content filter, so the bands are applied server-side and a page keeps fetching until it is full, instead of showing the three or four models that happened to survive
 - **Detail modal** — gallery, Civitai lookup, tags, description, copy path, delete
 - **Disk usage display** — total model count and storage size in header
 - **Filter** by name, type, or base model

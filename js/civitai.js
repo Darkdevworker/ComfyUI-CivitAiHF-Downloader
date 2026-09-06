@@ -95,7 +95,7 @@ window.__nsfwBlurEnabled = true;
 
 var S = {
   curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModels: [], username: "", loading: false,
-    cursor: "", cursorStack: [], nextCursor: null, limit: 24,
+    cursor: "", cursorStack: [], nextCursor: null, limit: 24, pageStarts: [0],
     page: 1, total: 0 },
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "",
     page: 1, done: false },
@@ -899,6 +899,7 @@ function renderBrowse(pane) {
     S.civitai.cursorStack = [];
     S.civitai.nextCursor = null;
     S.civitai.page = 1;
+    S.civitai.pageStarts = [0];
     S.civitai.total = 0;
     _cache.clear();
     _runSearch(1);
@@ -911,6 +912,11 @@ function renderBrowse(pane) {
       if (!S.civitai.nextCursor) return;
       S.civitai.cursorStack.push(S.civitai.cursor);
       S.civitai.cursor = S.civitai.nextCursor;
+      // Pages hold different numbers of models now (a page is full, not a
+      // fixed 24), so remember where this page starts instead of assuming.
+      var starts = S.civitai.pageStarts || (S.civitai.pageStarts = [0]);
+      starts[S.civitai.page] =
+        (starts[S.civitai.page - 1] || 0) + (S.civitai.items ? S.civitai.items.length : 0);
       S.civitai.page += 1;
     } else {
       if (!S.civitai.cursorStack.length) return;
@@ -927,7 +933,8 @@ function renderBrowse(pane) {
     var count = S.civitai.items.length;
     var bits = ["Page " + page];
     if (count) {
-      var first = (page - 1) * S.civitai.limit + 1;
+      var starts = S.civitai.pageStarts || [];
+      var first = (starts[page - 1] || 0) + 1;
       bits.push("Showing " + first + "\u2013" + (first + count - 1) +
         (S.civitai.total ? " of " + _fmtNum(S.civitai.total) + " models" : ""));
       // Without nsfw=true Civitai leaves adult models out of the results
@@ -952,6 +959,16 @@ function renderBrowse(pane) {
       params.set("baseModels", S.civitai.baseModels.join(","));
     }
     if (S.civitai.username) params.set("username", S.civitai.username);
+    // Civitai has no per-tier filter, so the bands used to be applied here
+    // after the fetch — which left pages of three or four models whenever
+    // most of a batch was filtered out. The server applies them now and
+    // keeps fetching until the page is full. Ticking every band is the same
+    // as ticking none, so there is nothing to send in that case.
+    var bandSel = parseBandSelection(S.civitai.nsfw);
+    if (bandSel.length && bandSel.length < BAND_ORDER.length) {
+      params.set("bands", bandSel.join(","));
+      params.set("want", String(S.civitai.limit));
+    }
     return params;
   }
 
@@ -975,10 +992,6 @@ function renderBrowse(pane) {
     var params = _lastParams();
     _api("/civitai/search?" + params.toString()).then(function(d) {
       var items = d.items || [];
-      // Client-side content-band filter: keep models whose overall tier
-      // (model level, or the highest tier among its preview images) is ticked.
-      var bandSel = parseBandSelection(S.civitai.nsfw);
-      if (bandSel.length) items = filterByBands(items, bandSel, false);
       S.civitai.items = items;
       grid.innerHTML = "";
       var frag = document.createDocumentFragment();

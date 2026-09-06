@@ -185,6 +185,90 @@ async def _civitai_call(fn, *args):
 
 # ── Civitai Search / Browse ────────────────────────────────────────────
 
+# How many times a page may go back to Civitai. Civitai has no per-tier
+# filter (nsfwLevel is silently ignored), so the bands are applied here and a
+# narrow selection needs several batches to fill 24 slots — measured live,
+# only PG ticked leaves about 1 model in 24, and Civitai caps a batch at 100.
+# Six rounds is enough for most selections and, worst case, costs six
+# requests to an endpoint that is cached for 60 seconds.
+_SEARCH_FILL_ROUNDS = 6
+
+
+def _band_of_item(item):
+    """Mirror of rating.js bandIdOfItem."""
+    if not isinstance(item, dict):
+        return "PG"
+    for key in ("nsfwLevel", "nsfw_level", "rating", "nsfwRating", "level", "nsfw"):
+        value = item.get(key)
+        if value is None or value in ("", "null", "undefined"):
+            continue
+        band_id = utils.band_id_from_value(value)
+        if band_id:
+            if key == "nsfw" and isinstance(value, bool):
+                return "PG" if band_id == "PG" else band_id
+            return band_id
+    return "PG"
+
+
+def _band_of_image(image, fallback=None):
+    """Mirror of rating.js bandIdOfImage."""
+    if not isinstance(image, dict):
+        return "PG"
+    for key in ("nsfwLevel", "nsfw_level", "rating", "nsfwRating", "level"):
+        value = image.get(key)
+        if value is None or value in ("", "null", "undefined"):
+            continue
+        band_id = utils.band_id_from_value(value)
+        if band_id:
+            return band_id
+    if isinstance(image.get("nsfw"), bool):
+        return "R" if image["nsfw"] else "PG"
+    return _band_of_item(fallback) if fallback else "PG"
+
+
+def _band_max(a, b):
+    ids = utils.BAND_IDS
+    return a if ids.index(a) >= ids.index(b) else b
+
+
+def _band_of_model(model):
+    """Mirror of rating.js bandIdOfModel.
+
+    The highest tier across the model, its versions and every preview image,
+    so a model with one XXX preview counts as XXX.
+    """
+    if not isinstance(model, dict):
+        return "PG"
+    worst = _band_of_item(model)
+    for version in (model.get("modelVersions") or []):
+        if not isinstance(version, dict):
+            continue
+        worst = _band_max(worst, _band_of_item(version))
+        for image in (version.get("images") or []):
+            worst = _band_max(worst, _band_of_image(image, model))
+    for image in (model.get("images") or []):
+        worst = _band_max(worst, _band_of_image(image, model))
+    return worst
+
+
+def _filter_models(items, bands):
+    """Keep the models whose band is ticked. An empty selection keeps all."""
+    if not bands:
+        return list(items or [])
+    return [m for m in (items or []) if _band_of_model(m) in bands]
+
+
+def _next_chunk(need, fetched, passed, floor=12, ceiling=100):
+    """How many models to ask Civitai for on the next round.
+
+    Sized from the pass rate seen so far, so a later round fetches roughly
+    what is still missing instead of a fixed batch that overshoots and
+    strands models past the end of the page.
+    """
+    rate = (passed / fetched) if fetched else 0.2
+    return max(floor, min(ceiling, int(need / max(rate, 0.05)) + 2))
+
+
 @routes.get("/civitai/search")
 async def search_civitai(request):
     try:
@@ -199,16 +283,18 @@ async def search_civitai(request):
         username = request.query.get("username", "")
         tag = request.query.get("tag", "")
         cursor = request.query.get("cursor", "")
+        # How many models the grid wants on one page. The bands are applied
+        # here rather than in the browser, and a page still has to arrive
+        # full — so when most of a batch is filtered out, ask again.
+        want = max(1, min(int(request.query.get("want", limit)), 60))
+        bands = [b.strip().upper() for b in request.query.get("bands", "").split(",")
+                 if b.strip()]
         domain = utils._get_active_domain()
 
-        params = {"limit": min(limit, 100)}
+        params = {}
 
         if query:
             params["query"] = query
-        if cursor:
-            params["cursor"] = cursor
-        elif not query and not cursor:
-            params["page"] = page
         if model_type and model_type.lower() != "any":
             params["types"] = model_type
         if nsfw:
@@ -226,18 +312,51 @@ async def search_civitai(request):
 
         loop = asyncio.get_event_loop()
         cache_key = (f"csearch:{query}:{model_type}:{sort}:{period}:{base_models}:"
-                     f"{nsfw}:{username}:{tag}:{cursor}:{page}:{limit}")
+                     f"{nsfw}:{username}:{tag}:{bands}:{cursor}:{page}:{limit}:{want}")
         cached = _api_cache.get(cache_key)
         if cached and (time.time() - cached["t"]) < 60:
             return web.json_response(cached["v"])
-        def _fetch_search():
+
+        def _fetch_search(round_params):
             return utils.CivitaiAPIUtils._request_with_retry(
-                f"https://{domain}/api/v1/models", params=params
+                f"https://{domain}/api/v1/models", params=round_params
             )
-        resp = await loop.run_in_executor(None, _fetch_search)
-        data = resp.json()
-        _api_cache_put(cache_key, data)
-        return web.json_response(data)
+
+        collected = []
+        fetched = 0
+        passed = 0
+        next_cursor = cursor or None
+        total_items = None
+        chunk = max(1, min(limit, 100))
+        for _ in range(_SEARCH_FILL_ROUNDS):
+            round_params = dict(params)
+            round_params["limit"] = chunk
+            if next_cursor:
+                round_params["cursor"] = next_cursor
+            elif not query and not cursor:
+                round_params["page"] = page
+            data = (await loop.run_in_executor(None, _fetch_search, round_params)).json() or {}
+            raw = data.get("items") or []
+            meta = data.get("metadata") or {}
+            kept = _filter_models(raw, bands)
+            collected.extend(kept)
+            fetched += len(raw)
+            passed += len(kept)
+            next_cursor = meta.get("nextCursor") or None
+            if meta.get("totalItems"):
+                total_items = meta["totalItems"]
+            # Stop when the page is full, the results ran out, or Civitai has
+            # no cursor to continue from.
+            if not raw or not next_cursor or len(collected) >= want:
+                break
+            chunk = _next_chunk(want - len(collected), fetched, passed)
+
+        payload = {
+            "items": collected[:want],
+            "metadata": {"nextCursor": next_cursor, "totalItems": total_items},
+        }
+        _api_cache_put(cache_key, payload)
+        return web.json_response(payload)
     except Exception as e:
         return web.json_response({"items": [], "total": 0, "error": str(e)})
 
