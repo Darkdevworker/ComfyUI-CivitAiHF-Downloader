@@ -94,7 +94,7 @@ var _localPromptCache = {};
 window.__nsfwBlurEnabled = true;
 
 var S = {
-  curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModels: [], loading: false,
+  curTab: "civitai", civitai: { items: [], query: "", type: "", sort: "Highest Rated", nsfw: "", period: "AllTime", baseModels: [], username: "", loading: false,
     cursor: "", cursorStack: [], nextCursor: null, limit: 24,
     page: 1, total: 0 },
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "",
@@ -843,12 +843,26 @@ function renderBrowse(pane) {
   CIVITAI_TYPES.forEach(function(t) { typeSel.appendChild(el("option", { value: t }, t || "All types")); });
   var periodSel = el("select", { id: "cvt-period", class: "cvt-select-sm", title: "Period" });
   CIVITAI_PERIODS.forEach(function(p) { periodSel.appendChild(el("option", { value: p }, p)); });
+  var userIn = el("input", { type: "text", id: "cvt-creator", placeholder: "Creator\u2026",
+    autocomplete: "off",
+    title: "Only show models by this Civitai user \u2014 or click a creator name on any card",
+    style: { flex: "1 1 84px", minWidth: "76px", maxWidth: "140px" } });
+  userIn.value = S.civitai.username || "";
+  userIn.onkeydown = function(e) { if (e.key === "Enter") { _resetAndSearch(); } };
   var baseCtl = buildBaseModelMultiSelect(S.civitai.baseModels || [], function() {
     S.civitai.baseModels = baseCtl._getVal();
   });
   var goBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, el("span", { class: "emoji-btn emoji-float" }, "\uD83D\uDD0D"), " Search");
-  row2.appendChild(typeSel); row2.appendChild(periodSel); row2.appendChild(baseCtl); row2.appendChild(goBtn);
+  row2.appendChild(typeSel); row2.appendChild(periodSel);
+  row2.appendChild(userIn); row2.appendChild(baseCtl); row2.appendChild(goBtn);
   sb.appendChild(row2);
+  // Cards and the detail modal call this to filter by their creator.
+  _creatorFilterHook = function(name) {
+    S.civitai.username = name || "";
+    userIn.value = S.civitai.username;
+    _resetAndSearch();
+    _scrollResultsTop();
+  };
   // ---- Content band row (PG · PG-13 · R · X · XXX) ----
   // Ticking a band only records the choice. Nothing searches until the
   // Search button is pressed, so ticking several bands costs one request.
@@ -937,6 +951,7 @@ function renderBrowse(pane) {
     if (S.civitai.baseModels && S.civitai.baseModels.length) {
       params.set("baseModels", S.civitai.baseModels.join(","));
     }
+    if (S.civitai.username) params.set("username", S.civitai.username);
     return params;
   }
 
@@ -952,6 +967,7 @@ function renderBrowse(pane) {
     S.civitai.type = typeSel.value;
     S.civitai.period = periodSel.value;
     S.civitai.baseModels = baseCtl._getVal();
+    S.civitai.username = (userIn.value || "").trim();
     if (S.civitai.sort === "Relevancy" && !S.civitai.query) {
       S.civitai.sort = "Highest Rated"; sortSel.value = "Highest Rated";
       _flashHint(sb, "\u26A0\uFE0F Relevancy requires a search query \u2014 switched to Highest Rated.");
@@ -1071,6 +1087,23 @@ function _lookupCivitai(raw, fieldEl) {
   }).then(function() { if (fieldEl) fieldEl.disabled = false; });
 }
 
+/* The Civitai pane registers a hook here; clicking a creator name fills the
+   creator field and runs the search, so "find everything by this person" is
+   one click from any card. */
+var _creatorFilterHook = null;
+
+function _creatorSpan(name, opts) {
+  opts = opts || {};
+  if (!name) return el("span", {}, "?");
+  return el("span", { class: "cvt-creator",
+    title: "Show only " + name + "\u2019s models",
+    onclick: function(e) {
+      e.stopPropagation();       // the card behind it opens the detail modal
+      if (opts.closeModal) closeModal();
+      if (_creatorFilterHook) _creatorFilterHook(name);
+    } }, name);
+}
+
 function _card(m) {
   var imgs = m.images || (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].images) || [];
   var firstImg = imgs[0];
@@ -1109,7 +1142,7 @@ function _card(m) {
   card.appendChild(el("div", { class: "body" },
     el("div", { class: "title" }, m.name || "Untitled"),
     el("div", { class: "meta" },
-      el("span", {}, (m.creator && m.creator.username) || "?"),
+      _creatorSpan((m.creator && m.creator.username) || ""),
       el("span", {}, m.type || "?"),
       makeBandBadge(modelBand))));
   card.onclick = function() { openDetail(m); };
@@ -1137,7 +1170,9 @@ function openDetail(model) {
   modal.appendChild(left); modal.appendChild(right);
 
   left.appendChild(el("h2", {}, model.name || ""));
-  left.appendChild(el("div", { class: "sub" }, "by " + (model.creator ? model.creator.username || "?" : "?") + " \u00B7 " + (model.type || "")));
+  left.appendChild(el("div", { class: "sub" }, "by ",
+    _creatorSpan((model.creator && model.creator.username) || "", { closeModal: true }),
+    " \u00B7 " + (model.type || "")));
   var gallery = el("div", { class: "gallery" });
   gallery.innerHTML = '<div class="cvt-spinner"></div>';
   left.appendChild(gallery);

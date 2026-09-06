@@ -265,7 +265,7 @@ eq(ctl._getVal().length, 0, "pushing onto the result does not change the control
 
 // ── wiring ─────────────────────────────────────────────────────────────
 console.log("state holds a list now");
-check(src, /baseModels: \[\], loading: false/, "S.civitai.baseModels starts as an array");
+check(src, /baseModels: \[\], username: "", loading: false/, "S.civitai.baseModels starts as an array");
 reject(src, /S\.civitai\.baseModel\b/, "the old single-value field is gone");
 reject(src, /datalist/, "the datalist is gone");
 reject(src, /baseIn|baseDl|baseListId/, "and so is the input it fed");
@@ -277,7 +277,7 @@ check(src, /if \(S\.civitai\.baseModels && S\.civitai\.baseModels\.length\) \{/,
   "but only when something is picked");
 check(src, /S\.civitai\.baseModels = baseCtl\._getVal\(\);/, "and reads them at search time");
 check(src, /var baseCtl = buildBaseModelMultiSelect\(/, "the control is built in the search bar");
-check(src, /row2\.appendChild\(typeSel\); row2\.appendChild\(periodSel\); row2\.appendChild\(baseCtl\);/,
+check(src, /row2\.appendChild\(userIn\); row2\.appendChild\(baseCtl\); row2\.appendChild\(goBtn\);/,
   "and sits where the old input did");
 
 console.log("styling exists for both themes");

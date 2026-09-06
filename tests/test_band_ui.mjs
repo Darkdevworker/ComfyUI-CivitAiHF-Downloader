@@ -69,6 +69,37 @@ row._setVal("XXX");
 eq(row._getVal(), "XXX", "_setVal applies a selection");
 eq(parseBandSelection(row._getVal()), ["XXX"], "parse round-trip");
 
+console.log("the row keeps all five bands on one line");
+eq(row.style.flexWrap, "nowrap", "the labels never wrap onto a second row");
+eq(row.style.whiteSpace, "nowrap", "and a label itself never breaks");
+eq(row.style.overflowX, "auto", "a panel too narrow to fit them scrolls instead");
+
+console.log("All / Clear flips both ways");
+const allBtn = row.children[5];
+eq(row.children.length, 6, "still 5 labels + one toggle");
+row._setVal("");
+eq(allBtn.textContent, "All", "with nothing ticked it offers to tick them all");
+allBtn.onclick();
+eq(row._getVal(), "PG,PG-13,R,X,XXX", "clicking All ticks every band — adult models included");
+eq(allBtn.textContent, "Clear", "and it now offers to untick them");
+allBtn.onclick();
+eq(row._getVal(), "", "clicking Clear unticks every band");
+eq(allBtn.textContent, "All", "and it offers All again");
+
+console.log("  the label follows the checkboxes, not just the button");
+row._setVal("PG,R");
+eq(allBtn.textContent, "All", "a partial selection still offers All");
+["PG-13", "X", "XXX"].forEach(function (id) {
+  row._cbs[id].checked = true;
+  row._cbs[id].onchange();
+});
+eq(allBtn.textContent, "Clear", "ticking the last one by hand flips the label");
+row._cbs["R"].checked = false;
+row._cbs["R"].onchange();
+eq(allBtn.textContent, "All", "unticking one flips it back");
+row._setVal("PG,PG-13,R,X,XXX");
+eq(allBtn.textContent, "Clear", "_setVal keeps the label in step");
+
 console.log("threshold select");
 const sel = buildBlurThresholdSelect("X");
 eq(sel.value, "X", "select shows the current threshold");

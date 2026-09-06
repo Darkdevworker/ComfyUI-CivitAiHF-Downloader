@@ -15,7 +15,7 @@
 ## ✨ Features
 
 ### 🔍 Browse & Search
-- **Civitai** — Search by query, model type, sort order, time period, base model (multi-select), and NSFW rating
+- **Civitai** — Search by query, creator, model type, sort order, time period, base model (multi-select), and NSFW rating
 - **Hugging Face** — Search by pipeline tag, library, author, and sort order
 - **Lookup** — Resolve any Civitai URL, model ID, version ID, or SHA256 hash
 - **Page navigation** — step through results with Prev/Next in both grids; the footer shows the range and total (`Page 2 · Showing 25–48 of 57 models`)
@@ -62,7 +62,8 @@
 - **Keyboard navigation** — `/` search, `←→↑↓` navigate cards, `Enter` opens, `Esc` closes, `1-5` switch tabs, `?` shows all shortcuts
 - **Compact grid mode** — toggle via Settings or `Ctrl+C` for denser card layout
 - **Comprehensive animations** — staggered card entrances, shimmer hover effects, spring physics, smooth transitions throughout
-- **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX; tick the ones you want and press Search to apply them
+- **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX; tick the ones you want (or hit **All** for every tier, including adult) and press Search to apply them
+- **Find a creator's models** — type a Civitai username in the *Creator* field, or click any creator's name on a card or in the detail view to filter to just their models
 - **Fast image loading** — grids lazy-load their thumbnails, previews are re-encoded to WebP on the fly, and the lightbox shows a cached placeholder while the full view downloads. Settings → *Image quality* picks **Data saver** (~12 KB per card, ~52 KB per lightbox image) or **High** (~43 KB / ~277 KB); the untouched original is always one click away
 - **NSFW blur** — only the NSFW bands (X · XXX) are blurred, hover to reveal
 - **Responsive** — adapts to narrow sidebar widths

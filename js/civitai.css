@@ -1281,6 +1281,16 @@ img.nsfw:hover { filter: none; }
 
 /* Filter row in the search bar */
 .cvt-band-filter { user-select: none; }
+.cvt-band-all { flex: 0 0 auto; }
+
+/* Clickable creator name — one click filters the search to that user */
+.cvt-creator {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  transition: color .2s var(--civ-ease-out);
+}
+.cvt-creator:hover { color: var(--civ-text, #f0f0f0); text-decoration-style: solid; }
 .cvt-band-filter input[type="checkbox"] { margin: 0; accent-color: #7c5cff; cursor: pointer; }
 .cvt-band-filter label:hover { color: var(--civ-text, #ddd); }
 

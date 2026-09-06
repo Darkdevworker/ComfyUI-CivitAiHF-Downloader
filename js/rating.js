@@ -392,22 +392,28 @@ export function buildBandCheckboxes(selectedStr, onChange) {
   var row = document.createElement("div");
   row.className = "cvt-band-filter";
   row.style.display = "flex";
-  row.style.gap = "6px";
+  row.style.gap = "5px";
   row.style.alignItems = "center";
-  row.style.flexWrap = "wrap";
+  // One horizontal line of five bands. It used to wrap, which read as two
+  // unrelated groups; if the panel is ever too narrow to fit them, scroll
+  // sideways rather than breaking the row.
+  row.style.flexWrap = "nowrap";
+  row.style.whiteSpace = "nowrap";
+  row.style.overflowX = "auto";
+  row.style.paddingBottom = "2px";
 
   CONTENT_BANDS.forEach(function (band) {
     var cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = band.id;
     cb.checked = selected.indexOf(band.id) >= 0;
-    cb.onchange = function () { if (typeof onChange === "function") onChange(); };
+    cb.onchange = function () { _syncAll(); if (typeof onChange === "function") onChange(); };
 
     var swatch = document.createElement("i");
-    swatch.style.cssText = "display:inline-block;width:7px;height:7px;border-radius:2px;background:" + band.color + ";";
+    swatch.style.cssText = "display:inline-block;width:6px;height:6px;border-radius:2px;flex:0 0 auto;background:" + band.color + ";";
 
     var lbl = document.createElement("label");
-    lbl.style.cssText = "display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;white-space:nowrap;color:var(--civ-text-dim);";
+    lbl.style.cssText = "display:inline-flex;align-items:center;gap:2px;flex:0 0 auto;cursor:pointer;font-size:11px;white-space:nowrap;color:var(--civ-text-dim);";
     lbl.title = band.id + " — " + band.label + "\n" + band.blurb;
     lbl.appendChild(cb);
     lbl.appendChild(swatch);
@@ -416,13 +422,28 @@ export function buildBandCheckboxes(selectedStr, onChange) {
     boxes[band.id] = cb;
   });
 
+  /* All / Clear is one button that flips.
+     Ticking every band is NOT the same as ticking none: with no band ticked
+     the request goes out without nsfw=true, so Civitai leaves adult models
+     out of the results entirely. "All" is how you ask for every tier. */
+  function _everyBand() {
+    return CONTENT_BANDS.every(function (b) { return boxes[b.id].checked; });
+  }
+  function _syncAll() {
+    var every = _everyBand();
+    clear.textContent = every ? "Clear" : "All";
+    clear.title = every
+      ? "Untick every band (adult models are then left out of the results)"
+      : "Tick every band, PG through XXX (includes adult models)";
+  }
   var clear = document.createElement("button");
   clear.type = "button";
-  clear.textContent = "All";
-  clear.style.cssText = "font-size:10px;padding:0 5px;cursor:pointer;";
-  clear.title = "Clear the content-band filter (show every tier)";
+  clear.className = "cvt-band-all";
+  clear.style.cssText = "font-size:10px;padding:0 5px;cursor:pointer;flex:0 0 auto;";
   clear.onclick = function () {
-    CONTENT_BANDS.forEach(function (b) { boxes[b.id].checked = false; });
+    var turnOn = !_everyBand();
+    CONTENT_BANDS.forEach(function (b) { boxes[b.id].checked = turnOn; });
+    _syncAll();
     if (typeof onChange === "function") onChange();
   };
   row.appendChild(clear);
@@ -434,7 +455,9 @@ export function buildBandCheckboxes(selectedStr, onChange) {
   row._setVal = function (str) {
     var sel = parseBandSelection(str);
     CONTENT_BANDS.forEach(function (b) { boxes[b.id].checked = sel.indexOf(b.id) >= 0; });
+    _syncAll();
   };
+  _syncAll();
   return row;
 }
 
