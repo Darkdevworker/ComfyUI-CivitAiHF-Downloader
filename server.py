@@ -1660,11 +1660,20 @@ async def hf_download(request):
         overwrite = body.get("overwrite", False)
         save_metadata = body.get("save_metadata", False)
         save_preview = body.get("save_preview", False)
+        preserve_subfolders = bool(body.get("preserve_subfolders", False))
         if not repo_id or not path:
             return web.json_response({"error": "Missing repo_id or path"}, status=400)
         filename = _safe_name(path.split("/")[-1]) or "model.safetensors"
+        # "Keep subfolders": a repo file at unet/model.safetensors lands in
+        # <dest>/unet/ rather than being flattened into <dest>/. Each part is
+        # sanitised because the repo path reaches the filesystem.
+        rel_dir = ""
+        if preserve_subfolders:
+            rel_dir = "/".join(
+                p for p in (_safe_name(part) for part in path.replace("\\", "/").split("/")[:-1])
+                if p)
         ok, dest = _safe_download_path(
-            save_as if save_as != "auto" else "loras", subfolder, filename)
+            save_as if save_as != "auto" else "loras", subfolder, rel_dir, filename)
         if not ok:
             return web.json_response({"error": dest}, status=400)
         dest_dir = os.path.dirname(dest)
@@ -1688,7 +1697,8 @@ async def hf_download(request):
             "retry_payload": {
                 "repo_id": repo_id, "repo_type": repo_type, "revision": revision,
                 "path": path, "save_as": save_as, "subfolder": subfolder,
-                "overwrite": True, "save_metadata": save_metadata,
+                "overwrite": True, "preserve_subfolders": preserve_subfolders,
+                "save_metadata": save_metadata,
                 "save_preview": save_preview,
             },
         }
