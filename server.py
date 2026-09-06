@@ -19,24 +19,24 @@ from server import PromptServer
 from . import utils
 
 # ── Response cache for API calls ──────────────────────────────────────
+# Keyed by query. Every reader applies its own TTL, so entries are stored as
+# {"v": value, "t": stored_at} and evicted oldest-first by _api_cache_put.
 _api_cache = {}
-_API_CACHE_TTL = 120  # seconds
+_API_CACHE_MAX = 200
+_API_CACHE_EVICT = 50
 
-def _cached_api_get(key, fetch_fn, ttl=None):
-    """Cache API responses to avoid repeated slow calls."""
-    ttl = ttl or _API_CACHE_TTL
-    now = time.time()
-    if key in _api_cache:
-        entry = _api_cache[key]
-        if now - entry["t"] < ttl:
-            return entry["v"]
-    result = fetch_fn()
-    _api_cache[key] = {"v": result, "t": now}
-    if len(_api_cache) > 200:
-        oldest = sorted(_api_cache.keys(), key=lambda k: _api_cache[k]["t"])[:50]
+
+def _api_cache_put(key, value):
+    """Store a cached response, dropping the oldest entries when it is full.
+
+    _api_cache used to be bounded only by a generic wrapper that nothing ever
+    called, so a long session of searches grew it without limit.
+    """
+    _api_cache[key] = {"v": value, "t": time.time()}
+    if len(_api_cache) > _API_CACHE_MAX:
+        oldest = sorted(_api_cache.keys(), key=lambda k: _api_cache[k]["t"])[:_API_CACHE_EVICT]
         for k in oldest:
             del _api_cache[k]
-    return result
 
 logger = logging.getLogger("CivitaiHF")
 
@@ -235,7 +235,7 @@ async def search_civitai(request):
             )
         resp = await loop.run_in_executor(None, _fetch_search)
         data = resp.json()
-        _api_cache[cache_key] = {"v": data, "t": time.time()}
+        _api_cache_put(cache_key, data)
         return web.json_response(data)
     except Exception as e:
         return web.json_response({"items": [], "total": 0, "error": str(e)})
