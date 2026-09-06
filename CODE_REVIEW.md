@@ -9,7 +9,33 @@ Line numbers are from that commit.
 **Findings 1–3 (high) are fixed** — see `tests/test_server_safety.py` (34 checks):
 a shared `_safe_model_path()` now guards every route that reads or removes a
 file, and every blocking call runs through `run_in_executor` / `_civitai_call`.
-Findings 4–12 (medium and low) are **still open**.
+
+**Finding 10 (low) is fixed too** — `.preview_cache` is now pruned to 3000
+files / 256 MB, oldest-accessed first (`_prune_preview_cache`, runs every 50
+writes). Covered by `tests/test_image_pipeline.py`.
+
+Findings 4–9, 11 and 12 are **still open**.
+
+## Image payload (separate pass, after the review)
+
+The grids and the lightbox were pulling far more data than they needed to.
+Fixed in the commit that added `tests/test_image_payload.mjs` (82 checks) and
+`tests/test_image_pipeline.py` (36 checks):
+
+- The lightbox fetched the untouched original — 839 KB for a typical showcase
+  JPEG, several MB for PNG screenshots — and Civitai **ignores the quality
+  parameter on the original**, so it could not be shrunk. It now loads a
+  114 KB version and offers full resolution as a click.
+- The CDN only honours some quality values; asking for `quality=65` returns
+  the full 839 KB original instead of an error. Presets are restricted to
+  multiples of ten from 40 to 80, and `_safeQuality()` snaps anything else.
+- No grid lazy-loaded: 24 cards meant 24 immediate fetches. All four card
+  sites now use `loading="lazy"`.
+- `/civitai/local-preview` answered with PNG whenever the source was a PNG —
+  a 450px-wide preview cost 25–800 KB. It now always re-encodes to WebP
+  (3–75 KB), is ETag'd, and has a caller-controlled quality.
+- Settings → Preferences → **Image quality** (Data saver / Balanced / High)
+  drives every one of those sizes.
 
 ## Verified clean
 

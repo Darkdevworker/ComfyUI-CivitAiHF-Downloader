@@ -100,7 +100,8 @@ var S = {
   hf: { items: [], query: "", sort: "lastModified", pipeline_tag: "", library: "", author: "",
     page: 1, done: false },
   downloads: [], dlFilter: "all", local: { models: [], filter: "" },
-  settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true },
+  settings: { baseUrl: "civitai.com", saveMeta: true, savePrev: true, nsfwBlur: true,
+    imageQuality: "balanced" },
   modal: null, lightbox: null,
   root: null,
 };
@@ -132,11 +133,38 @@ function _api(path, opts) {
 
 function _fmtBytes(n) { if (!n) return "\u2014"; const u = ["B","KB","MB","GB","TB"]; let i = 0; let s = n; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
 function _fmtNum(n) { if (n == null) return "?"; if (n < 1e3) return String(n); if (n < 1e6) return (n/1e3).toFixed(n<1e4?1:0)+"K"; if (n < 1e9) return (n/1e6).toFixed(n<1e7?1:0)+"M"; return (n/1e9).toFixed(1)+"B"; }
-var _THUMB_QUALITY = 60;
-function _thumbUrl(url, w) {
+/* ── Image quality ─────────────────────────────────────────────────────
+   Civitai's CDN serves a fixed set of width buckets (320 / 450 / 512 / 800
+   / 1200 / 1600 / 2200) and, importantly, only SOME quality values. Ask for
+   an unsupported one - 65, or 95 - and it silently returns the untouched
+   multi-megabyte original instead of an error. Multiples of ten from 40 to
+   80 are honoured at every width (30 is refused at width=1200), so every
+   quality below is snapped into that safe range.
+
+   Measured on a typical 2200px showcase JPEG:
+        card       450/q60   24 KB      320/q50   12 KB      512/q80   43 KB
+        gallery    512/q60   29 KB      450/q50   21 KB      800/q80   90 KB
+        lightbox  1200/q60  114 KB      800/q50   52 KB     1600/q80  277 KB
+        original (what the lightbox used to fetch, untransformed)  839 KB
+   The same widths/qualities are passed to our own /civitai/local-preview,
+   which now answers with WebP, so the Local tab shrinks too.            */
+var _IMG_PRESETS = {
+  saver:    { card: 320, cardQ: 50, gallery: 450, galleryQ: 50, lightbox: 800,  lightboxQ: 50 },
+  balanced: { card: 450, cardQ: 60, gallery: 512, galleryQ: 60, lightbox: 1200, lightboxQ: 60 },
+  high:     { card: 512, cardQ: 80, gallery: 800, galleryQ: 80, lightbox: 1600, lightboxQ: 80 }
+};
+var _IMG = _IMG_PRESETS.balanced;
+function _setImageQuality(name) { _IMG = _IMG_PRESETS[name] || _IMG_PRESETS.balanced; }
+function _safeQuality(q) {
+  q = Math.round((Number(q) || 60) / 10) * 10;
+  return Math.max(40, Math.min(80, q));
+}
+var _THUMB_QUALITY = _IMG_PRESETS.balanced.cardQ;  // legacy name, kept for callers
+function _thumbUrl(url, w, q) {
   if (!url) return url;
-  w = w || 450;
-  var t = "width=" + w + ",quality=" + _THUMB_QUALITY;
+  w = w || _IMG.card;
+  q = _safeQuality(q || _IMG.cardQ);
+  var t = "width=" + w + ",quality=" + q;
   // Civitai CDN uses a path transform segment between the UUID and the filename,
   // e.g. /original=true/ , /width=NNN/ , or /width=NNN,quality=90/ .
   // A smaller width + lower quality dramatically reduces payload (originals are multi-MB).
@@ -153,7 +181,41 @@ function _thumbUrl(url, w) {
     return url.replace(/\/([^/]+\.(?:jpe?g|png|webp|gif|avif))(\?|$)/i, "/" + t + "/$1$2");
   }
   var sep = url.indexOf("?") >= 0 ? "&" : "?";
-  return url + sep + "width=" + w + "&quality=" + _THUMB_QUALITY;
+  return url + sep + "width=" + w + "&quality=" + q;
+}
+
+/* Ask an image URL for the size a given view needs.
+     kind: "card" | "gallery" | "lightbox"
+   Our own /civitai/local-preview endpoint resizes server-side, so for those
+   URLs the width/quality travel as w/q query parameters instead of the
+   CDN's path transform. */
+function _imgUrl(url, kind) {
+  if (!url) return url;
+  var w = kind === "gallery" ? _IMG.gallery : kind === "lightbox" ? _IMG.lightbox : _IMG.card;
+  var q = _safeQuality(kind === "gallery" ? _IMG.galleryQ : kind === "lightbox" ? _IMG.lightboxQ : _IMG.cardQ);
+  if (url.indexOf("/civitai/local-preview") >= 0) {
+    var i = url.indexOf("?");
+    var params = new URLSearchParams(i >= 0 ? url.slice(i + 1) : "");
+    params.set("w", String(w));
+    params.set("q", String(q));
+    return (i >= 0 ? url.slice(0, i) : url) + "?" + params.toString();
+  }
+  return _thumbUrl(url, w, q);
+}
+
+/* The untouched original - only fetched when it is explicitly asked for. */
+function _fullUrl(url) {
+  if (!url) return url;
+  if (url.indexOf("/civitai/local-preview") >= 0) {
+    var i = url.indexOf("?");
+    if (i < 0) return url;
+    var params = new URLSearchParams(url.slice(i + 1));
+    params.delete("w");
+    params.delete("q");
+    var s = params.toString();
+    return url.slice(0, i) + (s ? "?" + s : "");
+  }
+  return url;
 }
 
 function _flashHint(sb, text) {
@@ -370,6 +432,8 @@ function buildUI() {
     S.settings.verifySha = cfg.verify_sha256 !== false;
     S.settings.nsfwBlur = cfg.nsfw_blur !== false;
     window.__nsfwBlurEnabled = S.settings.nsfwBlur;
+    S.settings.imageQuality = cfg.image_quality || "balanced";
+    _setImageQuality(S.settings.imageQuality);
   }).catch(function(){});
 
   return root;
@@ -460,7 +524,8 @@ function _bookmarkCard(b, onChange) {
     thumb.style.color = "#fff"; thumb.style.fontSize = "28px"; thumb.style.fontWeight = "700";
     thumb.textContent = ini;
   } else if (b.image) {
-    thumb.appendChild(el("img", { src: _thumbUrl(b.image, 400),
+    thumb.appendChild(el("img", { src: _imgUrl(b.image, "card"),
+      loading: "lazy", decoding: "async",
       style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
       onerror: function() { this.style.display = "none"; } }));
   } else {
@@ -916,7 +981,8 @@ function _card(m) {
   card.appendChild(makeBandBadge(modelBand));
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)" } });
   if (imgUrl) {
-    var img = el("img", { src: _thumbUrl(imgUrl, 400), style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.outerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;opacity:.3">\uD83D\uDDBC</div>'; } });
+    var img = el("img", { src: _imgUrl(imgUrl, "card"), loading: "lazy", decoding: "async",
+      style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.outerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:24px;opacity:.3">\uD83D\uDDBC</div>'; } });
     thumb.appendChild(img);
   }
   applyBlur(thumb, thumbBand);
@@ -1078,7 +1144,7 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     imgs.forEach(function(im) {
       var imgBand = bandIdOfImage(im, model);
       var imgEl = el("img", {
-        src: _thumbUrl(im.url, 500), loading: "lazy", decoding: "async",
+        src: _imgUrl(im.url, "gallery"), loading: "lazy", decoding: "async",
         style: { cursor: "pointer" }
       });
       // blur ONLY the NSFW images (X / XXX by default) — hover reveals them
@@ -1261,7 +1327,7 @@ function openLocalDetail(m, grid, filterIn) {
     _api("/civitai/local-previews?path=" + encodeURIComponent(m.path)).then(function(r) {
       var imgs = r.images || [];
       if (!imgs.length && m.preview) {
-        imgs = [{ url: "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=300", prompt: "", negativePrompt: "" }];
+        imgs = [{ url: _imgUrl("/civitai/local-preview?path=" + encodeURIComponent(m.preview), "gallery"), prompt: "", negativePrompt: "" }];
       }
       gallery.innerHTML = "";
       if (!imgs.length) {
@@ -1309,8 +1375,8 @@ function openLocalDetail(m, grid, filterIn) {
   } else if (m.preview) {
     gallery.innerHTML = "";
     var imgEl = el("img", {
-      src: "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=500",
-      loading: "lazy"
+      src: _imgUrl("/civitai/local-preview?path=" + encodeURIComponent(m.preview), "gallery"),
+      loading: "lazy", decoding: "async"
     });
     applyBlur(imgEl, localBand);
     gallery.appendChild(imgEl);
@@ -1375,7 +1441,7 @@ function openLocalDetail(m, grid, filterIn) {
             var prompt = cMeta.prompt || "";
             var negPrompt = cMeta.negativePrompt || "";
             var cThumb = el("img", {
-              src: _thumbUrl(imgSrc, 300), loading:"lazy",
+              src: _imgUrl(imgSrc, "card"), loading:"lazy", decoding:"async",
               style: { height:"80px", borderRadius:"var(--civ-radius-sm)", cursor:"pointer", flexShrink:0, objectFit:"cover" },
               title: prompt ? prompt.slice(0, 120) : ""
             });
@@ -1494,11 +1560,30 @@ function openLightbox(img, model) {
 
   // Left: image
   var imgWrap = el("div", { style: { flex:"0 1 auto", maxHeight:"90vh", display:"flex", flexDirection:"column", alignItems:"center", gap:"8px" } });
+  // Progressive load. The card-sized version of this image is almost always
+  // already in the browser cache, so it paints instantly as a stand-in while
+  // the lightbox size downloads. Full resolution is opt-in: on Civitai the
+  // untouched original is ~840 KB (several MB for PNG screenshots) and the
+  // quality parameter is ignored on it entirely.
+  var fullUrl = _fullUrl(img.url);
+  var viewUrl = _imgUrl(img.url, "lightbox");
+  var lqipUrl = _imgUrl(img.url, "card");
   var mainImg = el("img", {
-    src: img.url,
-    style: { maxWidth:"70vw", maxHeight:"88vh", objectFit:"contain", borderRadius:"var(--civ-radius)", boxShadow:"0 20px 60px rgba(0,0,0,.70)", transition:"transform .25s var(--civ-spring)" }
+    src: viewUrl,
+    decoding: "async",
+    style: { maxWidth:"70vw", maxHeight:"82vh", minWidth:"200px", minHeight:"140px",
+             objectFit:"contain", borderRadius:"var(--civ-radius)",
+             boxShadow:"0 20px 60px rgba(0,0,0,.70)", transition:"transform .25s var(--civ-spring)",
+             backgroundSize:"contain", backgroundPosition:"center", backgroundRepeat:"no-repeat" }
   });
   if (img.width && img.height) mainImg.style.aspectRatio = img.width + "/" + img.height;
+  if (lqipUrl && lqipUrl !== viewUrl) {
+    // Same geometry as object-fit:contain, so nothing jumps when it is replaced.
+    mainImg.style.backgroundImage = 'url("' + lqipUrl.replace(/"/g, "%22") + '")';
+    var _dropLqip = function() { mainImg.style.backgroundImage = ""; };
+    mainImg.addEventListener("load", _dropLqip);
+    mainImg.addEventListener("error", _dropLqip);
+  }
   imgWrap.appendChild(mainImg);
 
   // NSFW bands stay blurred in the lightbox until explicitly revealed
@@ -1514,6 +1599,42 @@ function openLightbox(img, model) {
     imgWrap.appendChild(el("div", { style: { display:"flex", alignItems:"center", gap:"6px" } },
       makeBandBadge(lbBand, { showLabel: true }), revealBtn));
   }
+
+  // Full resolution costs what the rest of the lightbox costs several times
+  // over, so it is only fetched when asked for - and the payload is shown so
+  // the trade-off is visible.
+  var lbTools = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", flexWrap:"wrap", marginTop:"2px" } });
+  var lbSize = el("span", { style: { fontSize:"9.5px", color:"var(--civ-text-mute)" } });
+  var fullBtn = el("button", { class: "cvt-btn ghost cvt-btn-xs" }, "\uD83D\uDD0D Full resolution");
+  fullBtn.onclick = function(e) {
+    e.stopPropagation();
+    if (fullBtn.disabled) return;
+    var was = fullBtn.textContent;
+    fullBtn.disabled = true;
+    fullBtn.textContent = "\u23F3 Loading\u2026";
+    var probe = new Image();
+    probe.onload = function() {
+      mainImg.src = fullUrl;
+      mainImg.style.backgroundImage = "";
+      fullBtn.textContent = "\u2713 Full resolution";
+    };
+    probe.onerror = function() {
+      fullBtn.disabled = false;
+      fullBtn.textContent = was;
+      _toast("Could not load the full-resolution image", "error");
+    };
+    probe.src = fullUrl;
+    try {
+      fetch(fullUrl).then(function(r) { return r.blob(); }).then(function(b) {
+        lbSize.textContent = _fmtBytes(b.size);
+      }).catch(function() {});
+    } catch (err) {}
+  };
+  lbTools.appendChild(fullBtn);
+  lbTools.appendChild(el("a", { href: fullUrl, target: "_blank", rel: "noopener",
+    style: { fontSize:"10px", color:"var(--civ-accent-dim)" } }, "\u2197 Open original"));
+  lbTools.appendChild(lbSize);
+  imgWrap.appendChild(lbTools);
 
   // Right: generation parameters panel
   var meta = img.meta || {};
@@ -2522,11 +2643,11 @@ function _renderLocalGrid(grid, filterIn) {
 function _localCard(m, grid, filterIn) {
   var localBand = bandIdOfModel(m);
   var isNsfw = isBlurred(localBand);
-  var imgUrl = m.preview ? "/civitai/local-preview?path=" + encodeURIComponent(m.preview) + "&w=450" : "";
+  var imgUrl = m.preview ? _imgUrl("/civitai/local-preview?path=" + encodeURIComponent(m.preview), "card") : "";
   var card = el("div", { class: "cvt-card" });
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)", position:"relative", overflow:"hidden" } });
   if (imgUrl) {
-    thumb.appendChild(el("img", { src: imgUrl, style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.style.display = "none"; } }));
+    thumb.appendChild(el("img", { src: imgUrl, loading: "lazy", decoding: "async", style: { width:"100%", height:"100%", objectFit:"cover", display:"block" }, onerror: function() { this.style.display = "none"; } }));
   }
   applyBlur(thumb, localBand);
   // Hover overlay for prompt info (lazy-fetched, cached globally)
@@ -2648,6 +2769,26 @@ function renderSettings(pane) {
   prefsGroup.appendChild(el("div", { class: "cvt-settings-hint" },
     "Only the NSFW bands (X = graphic nudity, XXX = overtly sexual) are blurred by default. " +
     "R (mature) is flagged with a red badge but stays visible — pick \u201cR and up\u201d to blur it too."));
+  // Image quality - the biggest single lever on how much data a page of
+  // results costs and how fast it appears on a slow connection.
+  var iqSel = el("select");
+  [{ v: "saver", l: "\uD83D\uDCC9 Data saver \u2014 smallest, fastest" },
+   { v: "balanced", l: "\u2696\uFE0F Balanced (default)" },
+   { v: "high", l: "\uD83D\uDD0D High quality \u2014 largest files" }].forEach(function(o) {
+    iqSel.appendChild(el("option", { value: o.v }, o.l));
+  });
+  iqSel.value = S.settings.imageQuality || "balanced";
+  iqSel.onchange = function() {
+    _setImageQuality(iqSel.value);
+    S.settings.imageQuality = iqSel.value;
+  };
+  prefsGroup.appendChild(el("div", { class: "cvt-settings-row", style: { marginTop:"6px" } },
+    el("span", { class: "cvt-settings-label" }, "\uD83D\uDDBC\uFE0F Image quality"), iqSel));
+  prefsGroup.appendChild(el("div", { class: "cvt-settings-hint" },
+    "Size of every card, gallery and lightbox image. Balanced \u2192 24 KB per card " +
+    "thumbnail and 114 KB per lightbox image; Data saver \u2192 12 KB and 52 KB. " +
+    "The untouched original (~840 KB) is always one click away in the lightbox."));
+
   var legend = el("div", { class: "cvt-band-legend" });
   CONTENT_BANDS.forEach(function(b) {
     legend.appendChild(el("span", { class: "cvt-band-chip", title: b.id + " \u2014 " + b.label + "\n" + b.blurb, style: { borderColor: b.color } },
@@ -2700,6 +2841,7 @@ function renderSettings(pane) {
     window.__nsfwBlurLevel = cfg.nsfw_blur_level || DEFAULT_BLUR_THRESHOLD;
     blurSel.value = window.__nsfwBlurLevel;
     cbCompact.checked = cfg.compact_grid===true;
+    iqSel.value = cfg.image_quality || "balanced";
     if(cfg.has_api_key){apiBadge.className="cvt-settings-badge active";apiBadge.textContent="connected";}
     if(cfg.has_token){hfBadge.className="cvt-settings-badge active";hfBadge.textContent="connected";}
   }).catch(function(){});
@@ -2712,7 +2854,7 @@ function renderSettings(pane) {
   hfSaveBtn.onclick=function(){var v=hfIn.value.trim();if(!v){hfStatus.innerHTML="<span style='color:#e88'>Paste a token first.</span>";return;}hfSaveBtn.disabled=true;hfStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:v})}).then(function(r){hfIn.value="";if(r.has_token){hfBadge.className="cvt-settings-badge active";hfBadge.textContent="connected";}hfStatus.innerHTML=r.has_token?"<span style='color:#6d6'>\u2713 Token saved</span>":"<span style='color:#cc9'>Token cleared</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){hfSaveBtn.disabled=false;});};
   hfClearBtn.onclick=function(){if(!confirm("Remove the saved HF token?"))return;_api("/civitai/hf/token",{method:"POST",body:JSON.stringify({token:""})}).then(function(){hfIn.value="";hfBadge.className="cvt-settings-badge";hfBadge.textContent="not set";hfStatus.innerHTML="<span style='color:#cc9'>Token removed</span>";}).catch(function(e){hfStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";});};
   hfIn.onkeydown=function(e){if(e.key==="Enter")hfSaveBtn.click();};
-  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,nsfw_blur_level:blurSel.value,compact_grid:cbCompact.checked,theme:S.root.classList.contains("light")?"light":"dark"};S.settings.saveMeta=cbMeta.checked;S.settings.savePrev=cbPrev.checked;S.settings.verifySha=cbHash.checked;S.settings.nsfwBlur=cbNsfwBlur.checked;window.__nsfwBlurLevel=blurSel.value;_cache.del("/civitai/settings");_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
+  saveBtn.onclick=function(){saveBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Saving\u2026</span>";var body={network_choice:baseSel.value==="civitai.red"?"red":baseSel.value==="civitai.work"?"work":"com",save_metadata:cbMeta.checked,save_preview:cbPrev.checked,verify_sha256:cbHash.checked,nsfw_blur:cbNsfwBlur.checked,nsfw_blur_level:blurSel.value,compact_grid:cbCompact.checked,image_quality:iqSel.value,theme:S.root.classList.contains("light")?"light":"dark"};S.settings.saveMeta=cbMeta.checked;S.settings.savePrev=cbPrev.checked;S.settings.verifySha=cbHash.checked;S.settings.nsfwBlur=cbNsfwBlur.checked;window.__nsfwBlurLevel=blurSel.value;_cache.del("/civitai/settings");_api("/civitai/settings",{method:"POST",body:JSON.stringify(body)}).then(function(){sStatus.innerHTML="<span style='color:#6d6'>\u2713 All settings saved</span>";_toast("Settings saved","ok");}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>Error: "+e.message+"</span>";}).then(function(){saveBtn.disabled=false;});};
   testBtn.onclick=function(){testBtn.disabled=true;sStatus.innerHTML="<span style='color:var(--civ-text-mute)'>Testing\u2026</span>";_api("/civitai/ping").then(function(r){sStatus.innerHTML=r.has_api_key?"<span style='color:#6d6'>\u2713 Connected \u2014 API key recognised</span>":"<span style='color:#cc9'>Connected \u2014 no API key (public only)</span>";}).catch(function(e){sStatus.innerHTML="<span style='color:#e88'>\u2717 Failed: "+e.message+"</span>";}).then(function(){testBtn.disabled=false;});};
   clearCacheBtn.onclick=function(){clearCacheBtn.disabled=true;_api("/civitai/cache/clear",{method:"POST"}).then(function(r){_cache.clear();_toast("Cache cleared");sStatus.innerHTML="<span style='color:#6d6'>\u2713 Cache cleared</span>";}).catch(function(e){_toast("Clear failed: "+e.message,"error");}).then(function(){clearCacheBtn.disabled=false;});};
 }

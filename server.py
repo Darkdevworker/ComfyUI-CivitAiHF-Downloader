@@ -260,44 +260,61 @@ async def model_by_id(request):
 async def local_preview(request):
     try:
         path = request.query.get("path", "")
-        w = request.query.get("w", "")
         ok, path = _safe_model_path(path)
         if not ok:
             return web.Response(status=400, text=path or "Invalid path")
         if not os.path.isfile(path):
             return web.Response(status=404, text="Not found")
+
+        # w / q are clamped so a caller cannot ask us to decode something huge.
+        try:
+            max_w = int(request.query.get("w", "") or 0)
+        except ValueError:
+            max_w = 0
+        try:
+            quality = int(request.query.get("q", "") or 72)
+        except ValueError:
+            quality = 72
+        max_w = max(32, min(2048, max_w)) if max_w else 0
+        quality = max(20, min(95, quality))
+
         ext = os.path.splitext(path)[1].lower()
         ct = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
               ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
-        # Resize if w param provided and PIL available
-        if w and w.isdigit():
-            try:
-                from PIL import Image
-                import io
-                max_w = int(w)
-                loop = asyncio.get_event_loop()
-                img_bytes = await loop.run_in_executor(None, _resize_preview, path, max_w, ext)
-                return web.Response(body=img_bytes, content_type=ct,
-                                    headers={"Cache-Control": "public, max-age=86400"})
-            except Exception:
-                pass  # fall through to full file
-        # Check file mtime for conditional requests
+
+        # The ETag covers path + mtime + transform, so reopening a model the
+        # browser has already seen costs a 304 instead of the whole preview.
         mtime = os.path.getmtime(path)
+        etag = '"%s"' % hashlib.md5(
+            f"{path}:{mtime}:{max_w}:{quality}".encode()).hexdigest()
+        cache_hdr = {"Cache-Control": "public, max-age=86400", "ETag": etag}
+        if request.headers.get("If-None-Match") == etag:
+            return web.Response(status=304, headers=cache_hdr)
+
+        # Animated GIFs pass through untouched: resizing keeps only one frame.
+        if max_w and ext != ".gif":
+            try:
+                loop = asyncio.get_event_loop()
+                img_bytes, out_ct = await loop.run_in_executor(
+                    None, _resize_preview, path, max_w, quality)
+                return web.Response(body=img_bytes, content_type=out_ct,
+                                    headers=cache_hdr)
+            except Exception:
+                pass  # fall through to the original file
+
+        # Check file mtime for conditional requests
         ims = request.headers.get("If-Modified-Since")
         if ims:
             try:
                 dt = datetime.strptime(ims, "%a, %d %b %Y %H:%M:%S %Z")
                 if mtime <= dt.timestamp():
-                    return web.Response(status=304)
+                    return web.Response(status=304, headers=cache_hdr)
             except Exception:
                 pass
-        return web.FileResponse(
-            path,
-            headers={
-                "Cache-Control": "public, max-age=86400",
-                "Last-Modified": datetime.utcfromtimestamp(mtime).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-            }
-        )
+        headers = dict(cache_hdr)
+        headers["Last-Modified"] = datetime.utcfromtimestamp(mtime).strftime(
+            "%a, %d %b %Y %H:%M:%S GMT")
+        return web.FileResponse(path, headers=headers)
     except Exception as e:
         return web.Response(status=500, text=str(e))
 
@@ -305,43 +322,99 @@ async def local_preview(request):
 _preview_cache_dir = os.path.join(os.path.dirname(__file__), ".preview_cache")
 os.makedirs(_preview_cache_dir, exist_ok=True)
 
-def _resize_preview(path, max_w, ext):
+_PREVIEW_CACHE_MAX_FILES = 3000
+_PREVIEW_CACHE_MAX_BYTES = 256 * 1024 * 1024
+_preview_cache_writes = 0
+
+
+def _prune_preview_cache():
+    """Keep the on-disk thumbnail cache from growing without bound.
+
+    Oldest-accessed entries go first. Called every few dozen writes so a
+    large Local tab does not stat the whole directory once per image.
+    """
+    try:
+        entries = []
+        total = 0
+        for name in os.listdir(_preview_cache_dir):
+            p = os.path.join(_preview_cache_dir, name)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            if not os.path.isfile(p):
+                continue
+            entries.append((st.st_atime, st.st_mtime, st.st_size, p))
+            total += st.st_size
+        if len(entries) <= _PREVIEW_CACHE_MAX_FILES and total <= _PREVIEW_CACHE_MAX_BYTES:
+            return
+        entries.sort()
+        while entries and (len(entries) > _PREVIEW_CACHE_MAX_FILES
+                           or total > _PREVIEW_CACHE_MAX_BYTES):
+            _, _, size, p = entries.pop(0)
+            try:
+                os.remove(p)
+                total -= size
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+def _resize_preview(path, max_w, quality):
+    """Downscale and re-encode a preview. Returns (bytes, content_type).
+
+    Always WebP: a 450px-wide PNG preview is typically 25-800 KB while the
+    same frame as WebP q72 is 3-75 KB, and every browser that runs the
+    ComfyUI frontend decodes WebP. Nothing is upscaled - a source smaller
+    than max_w is only re-encoded.
+    """
     from PIL import Image
     import io
     import hashlib as _hl
 
-    # Disk cache: skip resize if cached version exists and is newer
-    cache_key = _hl.md5(f"{path}:{max_w}".encode()).hexdigest()
-    cache_ext = ".webp" if ext != ".png" else ".png"
-    cache_path = os.path.join(_preview_cache_dir, cache_key + cache_ext)
+    cache_key = _hl.md5(f"{path}:{max_w}:{quality}".encode()).hexdigest()
+    cache_path = os.path.join(_preview_cache_dir, cache_key + ".webp")
     try:
         src_mtime = os.path.getmtime(path)
         if os.path.isfile(cache_path) and os.path.getmtime(cache_path) >= src_mtime:
             with open(cache_path, "rb") as f:
-                return f.read()
+                return f.read(), "image/webp"
     except Exception:
         pass
 
     img = Image.open(path)
     img.load()
+    if img.mode == "P":
+        img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+    elif img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
     if img.width > max_w:
         ratio = max_w / img.width
-        new_h = int(img.height * ratio)
+        new_h = max(1, int(img.height * ratio))
         img = img.resize((max_w, new_h), Image.LANCZOS)
     out = io.BytesIO()
-    if ext == ".png":
-        img.save(out, format="PNG")
-    else:
-        img.save(out, format="WEBP", quality=80)
+    try:
+        img.save(out, format="WEBP", quality=quality, method=4)
+        content_type = "image/webp"
+    except Exception:
+        # Pillow built without WebP - degrade to JPEG rather than PNG, which
+        # is several times larger for the same frame.
+        out = io.BytesIO()
+        img.convert("RGB").save(out, format="JPEG", quality=quality, optimize=True)
+        content_type = "image/jpeg"
     data = out.getvalue()
 
+    global _preview_cache_writes
     try:
         with open(cache_path, "wb") as f:
             f.write(data)
+        _preview_cache_writes += 1
+        if _preview_cache_writes % 50 == 0:
+            _prune_preview_cache()
     except Exception:
         pass
-    return data
-
+    return data, content_type
 
 @routes.get("/civitai/model-versions")
 async def model_versions(request):
@@ -1284,6 +1357,7 @@ async def get_settings(request):
         "nsfw_blur_level": utils.db_manager.get_setting("nsfw_blur_level", "R"),
         "theme": utils.db_manager.get_setting("theme", "dark"),
         "compact_grid": utils.db_manager.get_setting("compact_grid", False),
+        "image_quality": utils.db_manager.get_setting("image_quality", "balanced"),
         "has_api_key": bool(utils.db_manager.get_setting("civitai_api_key")),
         "has_token": bool(utils.db_manager.get_setting("hf_token")),
         "verify_sha256": utils.db_manager.get_setting("compute_sha", True),
@@ -1302,6 +1376,10 @@ async def save_settings(request):
         for key in str_keys:
             if key in data:
                 utils.db_manager.set_setting(key, str(data[key]))
+        if "image_quality" in data:
+            iq = str(data["image_quality"])
+            utils.db_manager.set_setting(
+                "image_quality", iq if iq in ("saver", "balanced", "high") else "balanced")
         if "civitai_api_key" in data:
             utils.db_manager.set_setting("civitai_api_key", data["civitai_api_key"])
         if "api_key" in data:
@@ -1649,10 +1727,15 @@ async def get_local_previews(request):
     """Return all preview images + per-image prompts for a local model."""
     try:
         path = request.query.get("path", "")
-        loop = asyncio.get_event_loop()
         ok, path = _safe_model_path(path)
         if not ok:
             return web.json_response({"images": [], "error": path})
+        pv_w = request.query.get("w", "450") or "450"
+        pv_q = request.query.get("q", "72") or "72"
+        if not pv_w.isdigit():
+            pv_w = "450"
+        if not pv_q.isdigit():
+            pv_q = "72"
         base = os.path.splitext(path)[0]
         # Load metadata for prompts
         json_path = base + ".civitai.json"
@@ -1684,7 +1767,8 @@ async def get_local_previews(request):
             m = m if isinstance(m, dict) else {}
             import urllib.parse
             previews.append({
-                "url": f"/civitai/local-preview?path={urllib.parse.quote(os.path.abspath(found))}&w=300",
+                "url": (f"/civitai/local-preview?path="
+                        f"{urllib.parse.quote(os.path.abspath(found))}&w={pv_w}&q={pv_q}"),
                 "prompt": m.get("prompt", ""),
                 "negativePrompt": m.get("negativePrompt", ""),
                 "seed": m.get("seed", ""),

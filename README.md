@@ -63,13 +63,14 @@
 - **Compact grid mode** — toggle via Settings or `Ctrl+C` for denser card layout
 - **Comprehensive animations** — staggered card entrances, shimmer hover effects, spring physics, smooth transitions throughout
 - **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX; tick the ones you want and press Search to apply them
+- **Fast image loading** — grids lazy-load their thumbnails, previews are re-encoded to WebP on the fly, and the lightbox shows a cached placeholder while the full view downloads. Settings → *Image quality* picks **Data saver** (~12 KB per card, ~52 KB per lightbox image) or **High** (~43 KB / ~277 KB); the untouched original is always one click away
 - **NSFW blur** — only the NSFW bands (X · XXX) are blurred, hover to reveal
 - **Responsive** — adapts to narrow sidebar widths
 - **Civitai logo** — the “C” mark is painted onto the sidebar tab (ComfyUI only accepts icon *fonts*, so the PNG is applied over the glyph) and shown in the panel tab bar
 
 ### ⚙️ Settings
 - **API Keys** — Civitai API key and Hugging Face token with status badges (● connected / ● not set)
-- **Preferences** — save metadata, save previews, verify SHA256, NSFW blur + blur threshold, compact grid
+- **Preferences** — save metadata, save previews, verify SHA256, NSFW blur + blur threshold, compact grid, image quality
 - **Network** — switch between `civitai.com`, `civitai.red`, `civitai.work` domains
 - **Quick Actions** — Auto-Tag, Cleanup, Organize, Rescan with one-click cards
 
