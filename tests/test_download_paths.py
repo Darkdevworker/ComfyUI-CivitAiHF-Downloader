@@ -152,6 +152,14 @@ check(civ, "real_name = _safe_name(real_name)", "Content-Disposition is sanitise
 check(civ, "_safe_download_path(\n                                model_type, subfolder, real_name)",
       "and the remote filename is re-checked")
 
+print("but a name the client built itself is not renamed")
+check(civ, 'bool(data.get("name_template"))', "the flag is read off the request body")
+check(civ, "if real_name and real_name != filename and not name_template:",
+      "Content-Disposition yields to a naming template")
+check(civ, '"name_template": name_template,', "the task carries the flag")
+check(civ, '"save_preview": save_preview, "name_template": name_template,',
+      "and so does the retry payload, so a retry keeps the chosen name")
+
 print("the Hugging Face route does the same")
 hf = SRC[SRC.index('@routes.post("/civitai/hf/download")'):SRC.index("def _hf_dl_blocking(")]
 check(hf, "_safe_download_path(", "it uses the helper")

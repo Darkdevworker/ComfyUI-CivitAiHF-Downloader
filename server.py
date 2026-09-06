@@ -726,6 +726,10 @@ async def start_download(request):
         save_metadata = data.get("save_metadata", False)
         save_preview = data.get("save_preview", False)
         metadata_only = data.get("metadata_only", False)
+        # True when the client built the name itself — either from a naming
+        # template or by typing one. The remote server must not then rename
+        # the file out from under the user through Content-Disposition.
+        name_template = bool(data.get("name_template"))
 
         domain = utils._get_active_domain()
 
@@ -800,13 +804,14 @@ async def start_download(request):
             "type": model_type, "progress": 0, "speed": 0,
             "status": "downloading", "path": save_path, "cancelled": False,
             "subfolder": subfolder, "model_version_id": model_version_id,
+            "name_template": name_template,
             "started_at": time.time(),
             "retry_endpoint": "/civitai/download",
             "retry_payload": {
                 "url": download_url, "model_version_id": model_version_id,
                 "save_as": model_type, "filename": filename, "subfolder": subfolder,
                 "overwrite": True, "save_metadata": save_metadata,
-                "save_preview": save_preview,
+                "save_preview": save_preview, "name_template": name_template,
             },
         }
 
@@ -873,7 +878,11 @@ async def start_download(request):
                         # Content-Disposition is text from the remote server:
                         # keep only the file name and re-check where it lands.
                         real_name = _safe_name(real_name)
-                        if real_name and real_name != filename:
+                        # A name the client built itself wins: a naming
+                        # template is a decision the user made, and letting
+                        # the remote server rename the file would quietly
+                        # undo it.
+                        if real_name and real_name != filename and not name_template:
                             ok_name, new_path = _safe_download_path(
                                 model_type, subfolder, real_name)
                             if ok_name and not os.path.isdir(new_path):

@@ -1306,6 +1306,9 @@ function _quickDownload(m, version, file) {
   if (tplPath) {
     if (tplPath.subfolder) body.subfolder = tplPath.subfolder;
     if (tplPath.filename) body.filename = tplPath.filename;
+    // Tell the server the name was chosen here, so Content-Disposition
+    // cannot rename the file on the way in.
+    body.name_template = true;
   }
   _api("/civitai/download", { method: "POST", body: JSON.stringify(body) }).then(function (job) {
     _toast("Queued: " + (job.filename || job.name || m.name || "download"), "ok");
@@ -1645,6 +1648,13 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
       metadata_only: metadataOnly,
       subfolder: subIn.value.trim(),
     };
+    // A naming template is a decision the user made, so say so: the server
+    // must not let Content-Disposition rename the file on the way in. Only
+    // an unedited template name counts — a hand-typed name keeps today's
+    // behaviour, where the remote file name can still correct the extension.
+    var tplPath = _templateToPath(S.settings.nameTemplate || "",
+                                  _nameContext(model, curVersion, file));
+    if (tplPath && body.filename === tplPath.filename) body.name_template = true;
     _api("/civitai/download", { method:"POST", body:JSON.stringify(body) }).then(function(job) {
       statusLine.innerHTML = "";
       statusLine.appendChild(document.createTextNode((metadataOnly ? "Metadata job queued: " : "Queued: ")));

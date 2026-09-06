@@ -223,6 +223,18 @@ has(py, 'if "saved_searches" in data:',
 has(py, 'saved if isinstance(saved, list) else []',
     "a non-list cannot poison the setting");
 
+// A template is pointless if the remote server renames the file on arrival.
+has(py, "bool(data.get(\"name_template\"))",
+    "the server is told when the client chose the name");
+has(py, "if real_name and real_name != filename and not name_template:",
+    "and then Content-Disposition does not override it");
+has(py, '"name_template": name_template',
+    "the flag rides along on a retry, so the name survives one");
+has(src, "body.name_template = true;",
+    "a one-click download marks its templated name as deliberate");
+has(src, "if (tplPath && body.filename === tplPath.filename) body.name_template = true;",
+    "the modal does the same, but only for an unedited template name");
+
 has(css, ".cvt-hist-row {", "history rows are styled");
 has(css, ".cvt-tpl-demo {", "so is the template preview");
 has(css, ".cvt-saved-row {", "so is the saved-search row");
