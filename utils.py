@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import threading
 import hashlib
@@ -11,6 +12,51 @@ import folder_paths
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from tqdm import tqdm
+
+logger = logging.getLogger("CivitaiHF")
+
+# ── Files that belong to a model ───────────────────────────────────────
+# The downloader writes the first preview as <base>.png and the rest as
+# <base>_2.png, <base>_3.png …; older builds also left images in a preview/
+# subfolder. Deleting, listing and scanning must all agree on that set, so
+# they all come through here instead of each guessing a prefix.
+PREVIEW_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+PREVIEW_MAX_VARIANTS = 20
+
+
+def preview_paths_for(model_path):
+    """Every preview image that can belong to this model, in display order.
+
+    Returned whether or not the files exist - callers filter. Names are
+    matched exactly: matching on a prefix is what let deleting
+    flux-dev.safetensors take flux-dev-v2.safetensors's preview with it.
+    """
+    base = os.path.splitext(model_path)[0]
+    model_dir = os.path.dirname(model_path)
+    stem = os.path.basename(base)
+    paths = []
+    for i in range(PREVIEW_MAX_VARIANTS):
+        suffix = "" if i == 0 else "_%d" % (i + 1)
+        for ext in PREVIEW_EXTS:
+            paths.append(os.path.join(model_dir, stem + suffix + ext))
+    # Legacy layout: some previews were written into a preview/ subfolder.
+    for ext in PREVIEW_EXTS:
+        paths.append(os.path.join(model_dir, "preview", stem + ext))
+    return paths
+
+
+def find_preview(model_path):
+    """First preview image that actually exists for this model, or None."""
+    for p in preview_paths_for(model_path):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def sidecar_path_for(model_path):
+    """Path of the .civitai.json metadata file belonging to this model."""
+    return os.path.splitext(model_path)[0] + ".civitai.json"
+
 
 HASH_CACHE_REFRESH_INTERVAL = 3600
 SINGLE_FILE_HASH_TIMEOUT = 90
@@ -940,24 +986,12 @@ def get_all_local_models_with_details(force_refresh=False):
             size = os.path.getsize(full_path)
             size_str = f"{size / 1e9:.1f} GB" if size > 1e9 else f"{size / 1e6:.1f} MB"
             folder = model_type
-            base_name = os.path.splitext(name)[0]
-
             # Look for preview image
-            preview = None
-            for ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                candidate = os.path.join(os.path.dirname(full_path), base_name + ext)
-                if os.path.isfile(candidate):
-                    preview = candidate
-                    break
-            # Also check preview subfolder
-            if not preview:
-                pf = os.path.join(os.path.dirname(full_path), "preview", base_name + ".png")
-                if os.path.isfile(pf):
-                    preview = pf
+            preview = find_preview(full_path)
 
             # Load metadata sidecar
             metadata = {}
-            json_path = full_path.replace(".safetensors", ".civitai.json")
+            json_path = sidecar_path_for(full_path)
             if os.path.isfile(json_path):
                 try:
                     with open(json_path) as f:
@@ -1124,19 +1158,8 @@ def scan_local_models_direct():
 
                 size = os.path.getsize(full_path)
                 size_str = f"{size / 1e9:.1f} GB" if size > 1e9 else f"{size / 1e6:.1f} MB"
-                base_name = os.path.splitext(fname)[0]
-
                 # Look for preview image
-                preview = None
-                for pext in [".png", ".jpg", ".jpeg", ".webp"]:
-                    candidate = os.path.join(dirpath, base_name + pext)
-                    if os.path.isfile(candidate):
-                        preview = candidate
-                        break
-                if not preview:
-                    pf = os.path.join(dirpath, "preview", base_name + ".png")
-                    if os.path.isfile(pf):
-                        preview = pf
+                preview = find_preview(full_path)
 
                 # Skip full JSON parsing during scan — metadata loads lazily on detail view.
                 # We only peek at the content band (PG…XXX) so the library can be

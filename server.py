@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import time
 import re
@@ -36,6 +37,8 @@ def _cached_api_get(key, fetch_fn, ttl=None):
         for k in oldest:
             del _api_cache[k]
     return result
+
+logger = logging.getLogger("CivitaiHF")
 
 routes = PromptServer.instance.routes
 
@@ -101,6 +104,19 @@ def _safe_model_path(path, must_exist=True):
                 return False, "File not found"
             return True, real
     return False, "Path is outside the ComfyUI models directories"
+
+
+def _is_subdir_of_models(path):
+    """True only for a strict subdirectory of a models dir, never a root.
+
+    ComfyUI expects `models/loras` and friends to exist, so an empty models
+    root must not be removed just because the last file inside it went.
+    """
+    real_c = os.path.normcase(os.path.realpath(path))
+    for root in _model_roots():
+        if real_c.startswith(os.path.normcase(root) + os.sep):
+            return True
+    return False
 
 
 def _read_json(path):
@@ -932,38 +948,36 @@ async def delete_model(request):
         ok, model_path = _safe_model_path(model_path)
         if not ok:
             return web.json_response({"error": model_path or "File not found"}, status=404)
-        base = os.path.splitext(model_path)[0]
         model_dir = os.path.dirname(model_path)
 
         # Remove model file
         os.remove(model_path)
 
-        # Remove sidecar .civitai.json
-        sidecar = base + ".civitai.json"
-        if os.path.exists(sidecar):
-            os.remove(sidecar)
+        # Remove the sidecar metadata and every preview image belonging to
+        # THIS model. utils.preview_paths_for matches the exact stem, so a
+        # deletion can no longer take a sibling's preview (flux-dev vs
+        # flux-dev-v2), and it also covers the preview/ subfolder that used
+        # to be left behind.
+        removed = []
+        for extra in [utils.sidecar_path_for(model_path)] + utils.preview_paths_for(model_path):
+            if os.path.isfile(extra):
+                os.remove(extra)
+                removed.append(extra)
 
-        # Remove all preview images (numbered variants)
-        for fname in os.listdir(model_dir):
-            fpath = os.path.join(model_dir, fname)
-            if os.path.isfile(fpath) and fname.startswith(os.path.basename(base)):
-                ext = os.path.splitext(fname)[1].lower()
-                if ext in (".png", ".jpg", ".jpeg", ".webp"):
-                    os.remove(fpath)
-
-        # Remove parent folder if empty
+        # Tidy the containing folder only when it is an empty subdirectory of
+        # a models dir - never a models root, which ComfyUI expects to exist.
         try:
-            if not os.listdir(model_dir):
+            if not os.listdir(model_dir) and _is_subdir_of_models(model_dir):
                 os.rmdir(model_dir)
         except Exception:
-            pass
+            logger.debug("could not remove empty folder %s", model_dir, exc_info=True)
 
         # Invalidate local models cache
         with _local_cache_lock:
             _local_models_cache["data"] = None
             _local_models_cache["time"] = 0
 
-        return web.json_response({"success": True})
+        return web.json_response({"success": True, "removed": removed})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -986,7 +1000,7 @@ async def auto_tag(request):
                     full_path = folder_paths.get_full_path(mt, name)
                     if not full_path or not os.path.exists(full_path):
                         continue
-                    json_path = full_path.replace(".safetensors", ".civitai.json")
+                    json_path = utils.sidecar_path_for(full_path)
                     if os.path.exists(json_path):
                         continue
                     try:
@@ -998,7 +1012,9 @@ async def auto_tag(request):
                             if info.get("images") and len(info["images"]) > 0:
                                 preview_url = info["images"][0].get("url")
                             if preview_url:
-                                preview_path = full_path.replace(".safetensors", ".preview.png")
+                                # Same name the downloader uses, so the
+                                # library scanner actually finds it.
+                                preview_path = os.path.splitext(full_path)[0] + ".png"
                                 if not os.path.exists(preview_path):
                                     try:
                                         req = urllib.request.Request(
@@ -1150,10 +1166,16 @@ async def auto_organize(request):
                         continue
                     try:
                         shutil.move(src, dest)
-                        for ext in [".civitai.json", ".preview.png"]:
-                            s = src.replace(".safetensors", ext)
-                            if os.path.exists(s):
-                                d = dest.replace(".safetensors", ext)
+                        # Metadata plus every preview for this model, in both
+                        # the current and the legacy <base>.preview.png layout.
+                        extras = [utils.sidecar_path_for(src)]
+                        extras += utils.preview_paths_for(src)
+                        extras += [os.path.splitext(src)[0] + ".preview.png"]
+                        for s in extras:
+                            if not os.path.isfile(s):
+                                continue
+                            d = os.path.join(os.path.dirname(dest), os.path.basename(s))
+                            if os.path.normpath(s) != os.path.normpath(d):
                                 os.rename(s, d)
                         moved += 1
                     except Exception:
@@ -1736,36 +1758,17 @@ async def get_local_previews(request):
             pv_w = "450"
         if not pv_q.isdigit():
             pv_q = "72"
-        base = os.path.splitext(path)[0]
-        # Load metadata for prompts
-        json_path = base + ".civitai.json"
+        # Same set of files delete-model removes, so what the detail view
+        # shows and what a delete cleans up can never disagree.
         images_meta = []
-        if os.path.isfile(json_path):
-            try:
-                with open(json_path) as f:
-                    meta = json.load(f)
-                images_meta = meta.get("images", [])
-            except Exception:
-                pass
-        # Find all numbered preview files matching base + .png/.jpg/.webp
-        exts = [".png", ".jpg", ".jpeg", ".webp"]
+        sidecar = _read_json(utils.sidecar_path_for(path))
+        if sidecar:
+            images_meta = sidecar.get("images") or []
         previews = []
-        for idx in range(20):  # up to 20 previews
-            suffix = "" if idx == 0 else f"_{idx + 1}"
-            found = None
-            for ext in exts:
-                candidate = base + suffix + ext
-                if os.path.isfile(candidate):
-                    found = candidate
-                    break
-            if not found:
-                if idx == 0:
-                    continue
-                break
+        for idx, found in enumerate(p for p in utils.preview_paths_for(path) if os.path.isfile(p)):
             meta = images_meta[idx] if idx < len(images_meta) and isinstance(images_meta[idx], dict) else {}
             m = meta.get("meta") or {}
             m = m if isinstance(m, dict) else {}
-            import urllib.parse
             previews.append({
                 "url": (f"/civitai/local-preview?path="
                         f"{urllib.parse.quote(os.path.abspath(found))}&w={pv_w}&q={pv_q}"),
