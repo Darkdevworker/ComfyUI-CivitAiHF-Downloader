@@ -10,7 +10,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import hashlib
-from datetime import datetime
+from email.utils import formatdate, parsedate_to_datetime
 import requests
 import folder_paths
 from aiohttp import web
@@ -365,18 +365,20 @@ async def local_preview(request):
             except Exception:
                 pass  # fall through to the original file
 
-        # Check file mtime for conditional requests
+        # Conditional requests. HTTP dates go through email.utils, which
+        # understands the format and the GMT zone: strptime("%Z") produced a
+        # naive datetime that .timestamp() then interpreted as local time, so
+        # the comparison was wrong by the machine's UTC offset.
         ims = request.headers.get("If-Modified-Since")
         if ims:
             try:
-                dt = datetime.strptime(ims, "%a, %d %b %Y %H:%M:%S %Z")
-                if mtime <= dt.timestamp():
+                since = parsedate_to_datetime(ims)
+                if since and mtime <= since.timestamp():
                     return web.Response(status=304, headers=cache_hdr)
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 pass
         headers = dict(cache_hdr)
-        headers["Last-Modified"] = datetime.utcfromtimestamp(mtime).strftime(
-            "%a, %d %b %Y %H:%M:%S GMT")
+        headers["Last-Modified"] = formatdate(mtime, usegmt=True)
         return web.FileResponse(path, headers=headers)
     except Exception as e:
         return web.Response(status=500, text=str(e))
