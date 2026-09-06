@@ -15,6 +15,7 @@ are exec'd out of the source against a stubbed folder_paths.
 """
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -61,7 +62,8 @@ class StubFolderPaths:
         return os.path.join(MODELS, kind, name)
 
 
-ns = {"os": os, "json": json, "folder_paths": StubFolderPaths}
+ns = {"os": os, "re": re, "json": json, "logging": logging,
+      "folder_paths": StubFolderPaths}
 start = SRC.index("def _model_roots():")
 end = SRC.index("async def _civitai_call(")
 exec(SRC[start:end], ns)

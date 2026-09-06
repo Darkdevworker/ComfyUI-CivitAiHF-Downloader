@@ -106,6 +106,53 @@ def _safe_model_path(path, must_exist=True):
     return False, "Path is outside the ComfyUI models directories"
 
 
+_UNSAFE_PART = re.compile(r"(^|[/\\])\.\.([/\\]|$)")
+_UNSAFE_NAME = re.compile(r'[\x00-\x1f<>:"|?*]')
+
+
+def _safe_name(text, fallback=""):
+    """Reduce remote- or user-supplied text to a single safe path component.
+
+    Used for names taken from API responses (creator, base model) and from
+    the Content-Disposition header, none of which should ever introduce a
+    directory separator or a `..` of their own.
+    """
+    v = str(text if text is not None else "")
+    v = v.replace("\\", "/")
+    if "/" in v:
+        v = v.rsplit("/", 1)[-1]
+    v = _UNSAFE_NAME.sub("", v).split("\x00")[0].strip()
+    if not v or v in (".", ".."):
+        return fallback
+    return v
+
+
+def _safe_download_path(*parts):
+    """Join user-supplied parts into a destination inside the models dirs.
+
+    The destination folder, `subfolder` and `filename` are all free text or
+    free choice in the download modal, so a bare `os.path.join` lets
+    `subfolder: "../../x"` or `filename: "/etc/passwd"` write anywhere on
+    disk. Returns (ok, resolved_path_or_error_message).
+    """
+    clean = []
+    for part in parts:
+        if part is None:
+            continue
+        part = str(part)
+        if not part.strip():
+            continue
+        if "\x00" in part:
+            return False, "Invalid path"
+        if os.path.isabs(part) or _UNSAFE_PART.search(part) or re.match(r"^[A-Za-z]:", part):
+            return False, "The destination must stay inside the models directory (%r)" % part
+        clean.append(part)
+    if not clean:
+        return False, "Missing destination"
+    return _safe_model_path(
+        os.path.join(folder_paths.models_dir, *clean), must_exist=False)
+
+
 def _is_subdir_of_models(path):
     """True only for a strict subdirectory of a models dir, never a root.
 
@@ -578,18 +625,18 @@ async def start_download(request):
             except Exception:
                 model_type = "loras"
 
-        models_dir = folder_paths.models_dir
-        type_dir = model_type
-        if subfolder:
-            save_dir = os.path.join(models_dir, type_dir, subfolder)
-        else:
-            save_dir = os.path.join(models_dir, type_dir)
+        # The destination folder, subfolder and filename are all chosen in
+        # the download modal, so they are built into a path through one
+        # containment check rather than a bare join.
+        ok, save_path = _safe_download_path(model_type, subfolder, filename)
+        if not ok:
+            return web.json_response({"error": save_path}, status=400)
+        save_dir = os.path.dirname(save_path)
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, filename)
         if os.path.isdir(save_path):
-            fallback_name = filename.strip() or "model.safetensors"
-            save_path = os.path.join(save_dir, fallback_name)
-            filename = fallback_name
+            return web.json_response(
+                {"error": "A folder already exists called " + os.path.basename(save_path)},
+                status=400)
 
         # For metadata-only jobs, just fetch & save metadata then return
         if metadata_only:
@@ -640,11 +687,18 @@ async def start_download(request):
                     m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\n]+)', cd)
                     if m:
                         real_name = urllib.parse.unquote(m.group(1))
+                        # Content-Disposition is text from the remote server:
+                        # keep only the file name and re-check where it lands.
+                        real_name = _safe_name(real_name)
                         if real_name and real_name != filename:
-                            filename = real_name
-                            save_path = os.path.join(save_dir, filename)
-                            if task_id in DOWNLOAD_TASKS:
-                                DOWNLOAD_TASKS[task_id].update({"filename": filename, "path": save_path})
+                            ok_name, new_path = _safe_download_path(
+                                model_type, subfolder, real_name)
+                            if ok_name and not os.path.isdir(new_path):
+                                filename = real_name
+                                save_path = new_path
+                                if task_id in DOWNLOAD_TASKS:
+                                    DOWNLOAD_TASKS[task_id].update(
+                                        {"filename": filename, "path": save_path})
                 downloaded = 0
                 start_t = time.time()
                 with open(save_path, "wb") as f:
@@ -1149,7 +1203,12 @@ async def auto_organize(request):
                         ):
                             base_model_info = tag["name"].replace(" ", "_").lower()
                             break
-                    folder_parts = [p for p in [cat, base_model_info, creator] if p]
+                    # cat / creator come from the Civitai response, so each
+                    # part is reduced to one safe component before it is
+                    # turned into a directory.
+                    folder_parts = [p for p in (
+                        _safe_name(cat), _safe_name(base_model_info), _safe_name(creator)
+                    ) if p]
                     if not folder_parts:
                         continue
                     target_subdir = "/".join(folder_parts)
@@ -1603,12 +1662,13 @@ async def hf_download(request):
         save_preview = body.get("save_preview", False)
         if not repo_id or not path:
             return web.json_response({"error": "Missing repo_id or path"}, status=400)
-        filename = path.split("/")[-1]
-        dest_dir = os.path.join(folder_paths.models_dir, save_as if save_as != "auto" else "loras")
-        if subfolder:
-            dest_dir = os.path.join(dest_dir, subfolder)
+        filename = _safe_name(path.split("/")[-1]) or "model.safetensors"
+        ok, dest = _safe_download_path(
+            save_as if save_as != "auto" else "loras", subfolder, filename)
+        if not ok:
+            return web.json_response({"error": dest}, status=400)
+        dest_dir = os.path.dirname(dest)
         os.makedirs(dest_dir, exist_ok=True)
-        dest = os.path.join(dest_dir, filename)
         if os.path.exists(dest) and not overwrite:
             # Auto-rename: file.safetensors -> file_2.safetensors
             base_name, ext = os.path.splitext(filename)

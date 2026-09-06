@@ -14,7 +14,9 @@ The helpers are exec'd out of utils.py / server.py (both need ComfyUI to
 import) and exercised against a real temporary models folder.
 """
 
+import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -138,7 +140,7 @@ for name in ("flux-dev-v2.safetensors", "flux-dev-v2.png", "flux-dev-v2.civitai.
        f"{name} survives — a prefix match used to delete it")
 
 print("the models folder itself is never removed")
-sns = {"os": os, "folder_paths": type("F", (), {
+sns = {"os": os, "re": re, "logging": logging, "folder_paths": type("F", (), {
     "models_dir": tmp,
     "folder_names_and_paths": {"loras": ([LORAS], {".safetensors"})},
 })()}
