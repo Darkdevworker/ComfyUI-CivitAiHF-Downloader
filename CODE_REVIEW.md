@@ -6,15 +6,23 @@ Line numbers are from that commit.
 
 ## Status
 
-**Findings 1–3 (high) are fixed** — see `tests/test_server_safety.py` (34 checks):
-a shared `_safe_model_path()` now guards every route that reads or removes a
-file, and every blocking call runs through `run_in_executor` / `_civitai_call`.
+**Every finding is fixed.** 1–3 and 7 went first; 4–6 and 8–12 followed in the
+commits listed below. Nothing in this review is open any more.
 
-**Finding 10 (low) is fixed too** — `.preview_cache` is now pruned to 3000
-files / 256 MB, oldest-accessed first (`_prune_preview_cache`, runs every 50
-writes). Covered by `tests/test_image_pipeline.py`.
+| Findings | Tests | What fixed it |
+|---|---|---|
+| 1, 2, 3 (high) | `test_server_safety.py` (34) | `_safe_model_path()` + off-loop I/O |
+| 4, 5 (medium) | `test_model_files.py` (50) | one shared definition of a model's files |
+| 6 (medium) | `test_download_paths.py` (49) | `_safe_download_path()` |
+| 7 (medium) | `test_model_files.py` | sidecar paths via `os.path.splitext` |
+| 8 (low) | `test_hf_subfolders.py` (22) | `preserve_subfolders` implemented |
+| 9 (low) | `test_dead_code.py` (22) | dead wrapper gone, `_api_cache` bounded |
+| 10 (low) | `test_image_pipeline.py` (36) | `.preview_cache` pruned |
+| 11 (low) | `test_http_dates.py` (21) | HTTP dates via `email.utils` |
+| 12 (low) | `test_swallowed_errors.py` (29) | nothing swallowed silently |
 
-Findings 4–9, 11 and 12 are **still open**.
+Set `logging.getLogger("CivitaiHF").setLevel(logging.DEBUG)` to see what used
+to be invisible.
 
 ## Image payload (separate pass, after the review)
 
@@ -121,7 +129,7 @@ awaits between reads.
 
 ## Medium
 
-### 4. Deleting a model damages other models' previews, and orphans its own
+### 4. Deleting a model damages other models' previews, and orphans its own  — FIXED
 
 `server.py:781-786`:
 
@@ -145,7 +153,7 @@ Two bugs in five lines:
 **Fix:** match exactly `basename(base) + "." + ext` plus the numbered variants, and
 also clear `<dir>/preview/<basename>.*`.
 
-### 5. Deleting your last model in a folder deletes the folder itself
+### 5. Deleting your last model in a folder deletes the folder itself  — FIXED
 
 `server.py:793-797` — `if not os.listdir(model_dir): os.rmdir(model_dir)`. Delete
 the last LoRA and `models/loras` disappears, which ComfyUI does not expect until
@@ -154,7 +162,7 @@ it is restarted.
 **Fix:** only `rmdir` when `model_dir` is a *sub*directory of a models folder, never
 the models folder itself.
 
-### 6. Path traversal through `subfolder` and `filename` on both download routes
+### 6. Path traversal through `subfolder` and `filename` on both download routes  — FIXED
 
 `server.py:439` and the HF equivalent build the destination with plain joins:
 
@@ -169,7 +177,7 @@ or `filename = "../../x.safetensors"` writes outside the models directory.
 **Fix:** reject `..` and separators in `filename`, and run `subfolder` through the
 same containment check as finding 1.
 
-### 7. `/civitai/model-info` never finds metadata for non-`.safetensors` models
+### 7. `/civitai/model-info` never finds metadata for non-`.safetensors` models  — FIXED
 
 `server.py:1290`:
 
@@ -189,18 +197,22 @@ extension.)
 
 ## Low
 
-8. **`preserve_subfolders` does nothing.** `js/civitai.js:1937` sends it from the HF
+8. **`preserve_subfolders` does nothing.**  — FIXED (implemented: the repo's
+   own directory layout is kept when the box is ticked). `js/civitai.js:1937` sends it from the HF
    detail view; neither `server.py` nor `utils.py` ever reads it. Either implement it
    or remove the checkbox.
-9. **Dead code.** `_cached_api_get` (`server.py:24`) is defined and never called.
+9. **Dead code.**  — FIXED (`_cached_api_get` and the unused download payload
+   fields are gone; `_api_cache` is bounded by `_api_cache_put`). `_cached_api_get` (`server.py:24`) is defined and never called.
    The download payload still carries `format`, `fp`, `size`
    (`js/civitai.js:1172-1174`) which the server ignores — harmless now that the
    chosen file's URL is sent, but misleading.
 10. **`.preview_cache` grows without bound** (`server.py:219`, created at import).
     Nothing evicts it and no route clears it.
-11. **`datetime.utcfromtimestamp`** (`server.py:211`) is deprecated on Python 3.12+;
+11. **`datetime.utcfromtimestamp`**  — FIXED (and the naive-`strptime` bug
+    beside it: `If-Modified-Since` was being read in local time). (`server.py:211`) is deprecated on Python 3.12+;
     use `datetime.fromtimestamp(mtime, timezone.utc)`.
-12. **30 `except …: pass` blocks** across `server.py` (19) and `utils.py` (11) hide
+12. **30 `except …: pass` blocks**  — FIXED (all of them, plus nine that
+    swallowed with `continue`/`return`, now log with a traceback). across `server.py` (19) and `utils.py` (11) hide
     failures — most notably around metadata and preview saving, which is why a
     missing preview looks identical to a network error.
 
