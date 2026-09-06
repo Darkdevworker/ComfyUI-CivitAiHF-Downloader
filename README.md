@@ -64,6 +64,9 @@
 - **Compact grid mode** — toggle via Settings or `Ctrl+C` for denser card layout
 - **Comprehensive animations** — staggered card entrances, shimmer hover effects, spring physics, smooth transitions throughout
 - **Content bands** — every model and showcase image is tagged PG / PG-13 / R / X / XXX; tick the ones you want (or hit **All** for every tier, including adult) and press Search to apply them
+- **Quick actions on a card** — hover for one-click download (the newest version's primary file, into the folder its type implies) and bookmark, without opening the detail modal; the modal is still there for picking a specific file
+- **Active filters as chips** — anything narrowing the search appears as a removable chip above the results, so you can see what is applied and drop one filter without hunting for the control that set it
+- **Pinned pager** — Prev/Next stay at the bottom of the pane rather than below the last card, so a page of results never has to be scrolled past to change page
 - **Find a creator's models** — type a Civitai username in the *Creator* field, or click any creator's name on a card or in the detail view to filter to just their models. Combining a creator with a search term searches that creator's models here rather than through Civitai, whose own `username` + `query` combination misses results that are plainly there
 - **Fast image loading** — grids lazy-load their thumbnails, previews are re-encoded to WebP on the fly, and the lightbox shows a cached placeholder while the full view downloads. Settings → *Image quality* picks **Data saver** (~12 KB per card, ~52 KB per lightbox image) or **High** (~43 KB / ~277 KB); the untouched original is always one click away
 - **NSFW blur** — R / X / XXX are blurred by default (PG and PG-13 stay visible), hover to reveal; the threshold is configurable in Settings

@@ -874,6 +874,58 @@ function renderBrowse(pane) {
   });
   ratingRow.style.marginTop = "2px";
   sb.appendChild(ratingRow);
+
+  // ---- Active filters, as removable chips ----
+  // Five controls can narrow a search and none of them said so once you
+  // scrolled away from the search bar. These state what is applied to the
+  // results on screen, and drop one without hunting for its control.
+  var chipRow = el("div", { class: "cvt-chiprow", style: { display: "none" } });
+  function _renderChips() {
+    chipRow.innerHTML = "";
+    var chips = [];
+    if (S.civitai.type) {
+      chips.push({ k: "Type", v: S.civitai.type, clear: function () { typeSel.value = ""; } });
+    }
+    if (S.civitai.period && S.civitai.period !== "AllTime") {
+      chips.push({ k: "Period", v: S.civitai.period,
+        clear: function () { periodSel.value = "AllTime"; } });
+    }
+    if (S.civitai.username) {
+      chips.push({ k: "Creator", v: S.civitai.username,
+        clear: function () { userIn.value = ""; } });
+    }
+    var bm = S.civitai.baseModels || [];
+    if (bm.length) {
+      chips.push({ k: "Base", v: bm[0] + (bm.length > 1 ? " +" + (bm.length - 1) : ""),
+        title: bm.join(", "), clear: function () { baseCtl._setVal([]); } });
+    }
+    var bandSel = parseBandSelection(S.civitai.nsfw);
+    // Ticking every band filters nothing out, so it is not a filter.
+    if (bandSel.length && bandSel.length < BAND_ORDER.length) {
+      chips.push({ k: "Bands", v: bandSel.join(", "),
+        clear: function () { ratingRow._setVal(""); } });
+    }
+    if (!chips.length) { chipRow.style.display = "none"; return; }
+    chipRow.style.display = "";
+    chips.forEach(function (c) {
+      chipRow.appendChild(el("span", { class: "cvt-chip", title: c.title || c.v },
+        el("span", { class: "cvt-chip-k" }, c.k),
+        el("b", {}, c.v),
+        el("button", { class: "cvt-chip-x", type: "button", title: "Remove this filter",
+          onclick: function (e) { e.stopPropagation(); c.clear(); _resetAndSearch(); } },
+          "\u00D7")));
+    });
+    if (chips.length > 1) {
+      chipRow.appendChild(el("button", { class: "cvt-chip-clear", type: "button",
+        title: "Remove every filter",
+        onclick: function (e) {
+          e.stopPropagation();
+          chips.forEach(function (c) { c.clear(); });
+          _resetAndSearch();
+        } }, "Clear all"));
+    }
+  }
+  sb.appendChild(chipRow);
   pane.appendChild(sb);
 
   var grid = el("div", { class: "cvt-grid", id: "cvt-grid" });
@@ -1008,6 +1060,7 @@ function renderBrowse(pane) {
         empty.style.display = "none";
       }
       _updatePager();
+      _renderChips();
     }).catch(function(e) {
       _showSearchError(e, attempt, sb, grid, empty, pager);
     }).then(function() { S.civitai.loading = false; });
@@ -1117,6 +1170,33 @@ function _creatorSpan(name, opts) {
     } }, name);
 }
 
+/**
+ * One-click download from a card: the newest version's primary file, into
+ * the folder the type implies. Anything more specific is a click away in
+ * the detail modal, which is where picking a file belongs.
+ */
+function _quickDownload(m, version, file) {
+  var body = {
+    model_version_id: version.id,
+    // The picked file's own URL (carries ?fileId=) so the chosen variant is
+    // what downloads, not the version's primary file.
+    url: (file && file.downloadUrl) || version.downloadUrl || "",
+    save_as: _guessFolder(m.type),
+    filename: (file && file.name) || "",
+    overwrite: false,
+    save_metadata: !!S.settings.saveMeta,
+    save_preview: !!S.settings.savePrev,
+    metadata_only: false,
+    subfolder: _sanitizeModelName(m.name || "", 50),
+  };
+  _api("/civitai/download", { method: "POST", body: JSON.stringify(body) }).then(function (job) {
+    _toast("Queued: " + (job.filename || job.name || m.name || "download"), "ok");
+    _ensureDlPolling();
+  }).catch(function (e) {
+    _toast("Download failed: " + e.message, "error");
+  });
+}
+
 function _card(m) {
   var imgs = m.images || (m.modelVersions && m.modelVersions[0] && m.modelVersions[0].images) || [];
   var firstImg = imgs[0];
@@ -1126,8 +1206,18 @@ function _card(m) {
   var thumbBand = bandIdOfImage(firstImg, m);
   var imgUrl = firstImg ? (typeof firstImg === "string" ? firstImg : firstImg.url || "") : "";
   var card = el("div", { class: "cvt-card", style: { position:"relative" } });
-  // Bookmark button (top-right of card)
-  var bookmarkBtn = el("button", { class: "cvt-bookmark-btn", title: "Bookmark this model", style: { position:"absolute", top:"4px", right:"4px", zIndex:2, background:"rgba(0,0,0,.5)", border:"none", borderRadius:"50%", width:"28px", height:"28px", color:"#ff8c42", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 } }, el("img", { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpUlEQVR4nO2ZvUoDQRSFv2ASBQmCjYUPIIiFYAKiYmmbN7DxAXwFX0GxshTUNIqIYGdnaSGijdj405kuKmKSkZUJjIOZrLszGyT3gwv7c+ecOcvMFrsgCMJAsgTUgGegCaiE1QSegANgMYuJ54HtFBPuVVvaIxghJ6+MEMGWjWl0DMwBxRSaRaAMnBi6bWCBANQMk8jQN0eG/l4A/e8N2zGInrxvyob+YwD9H2+bNMumG0Xr7eQdc/2HQoX0kAAxUBLAgQSIgZIADiRADJQEcCABYqAkgAMJEAMlARxIgBgoCeBRfAW40RUd/5sABWADaFnfejaBYU8eiYgjPgVcWr1mXQMzKT0S00t8DWhYfae6zGsN3ZvEIxXdxMeAfev+O7AO5HTPKvBq9RwC4/0OMA/cW/dugdlfxk8DV1bvA7DcjwB5vVHtfwO7wKhDY0Rv5rYxpqWvFbIMcGGdvwDVP2hV9Rjl0AwawKxzYDKB3gRw5tD1jm3wqZfRUArNnN7sH1kEeDPE74CKR+2K1uzoR17eiZ52HdgBSgH0S1q7rr0EQRgEvgCZsWa8d9MqpQAAAABJRU5ErkJggg==", style: { width:"16px", height:"16px", display:"block" } }));
+  // Quick actions: bookmark and download without opening the detail modal.
+  // They stay out of the way until the pointer is on the card, so a grid of
+  // 24 does not read as 48 buttons.
+  var version = (m.modelVersions && m.modelVersions[0]) || null;
+  var vFiles = (version && version.files) || [];
+  var primary = vFiles.filter(function (f) { return f && f.primary; })[0] || vFiles[0] || null;
+  var dlUrl = (primary && primary.downloadUrl) || (version && version.downloadUrl) || "";
+  var actions = el("div", { class: "cvt-card-actions" });
+  var bookmarkBtn = el("button", { class: "cvt-card-act", type: "button",
+    title: "Bookmark this model" },
+    el("img", { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpUlEQVR4nO2ZvUoDQRSFv2ASBQmCjYUPIIiFYAKiYmmbN7DxAXwFX0GxshTUNIqIYGdnaSGijdj405kuKmKSkZUJjIOZrLszGyT3gwv7c+ecOcvMFrsgCMJAsgTUgGegCaiE1QSegANgMYuJ54HtFBPuVVvaIxghJ6+MEMGWjWl0DMwBxRSaRaAMnBi6bWCBANQMk8jQN0eG/l4A/e8N2zGInrxvyob+YwD9H2+bNMumG0Xr7eQdc/2HQoX0kAAxUBLAgQSIgZIADiRADJQEcCABYqAkgAMJEAMlARxIgBgoCeBRfAW40RUd/5sABWADaFnfejaBYU8eiYgjPgVcWr1mXQMzKT0S00t8DWhYfae6zGsN3ZvEIxXdxMeAfev+O7AO5HTPKvBq9RwC4/0OMA/cW/dugdlfxk8DV1bvA7DcjwB5vVHtfwO7wKhDY0Rv5rYxpqWvFbIMcGGdvwDVP2hV9Rjl0AwawKxzYDKB3gRw5tD1jm3wqZfRUArNnN7sH1kEeDPE74CKR+2K1uzoR17eiZ52HdgBSgH0S1q7rr0EQRgEvgCZsWa8d9MqpQAAAABJRU5ErkJggg==",
+      style: { width: "15px", height: "15px", display: "block" } }));
   bookmarkBtn.onclick = function(e) {
     e.stopPropagation();
     var payload = {
@@ -1141,7 +1231,19 @@ function _card(m) {
       else _toast((r.message || "Already bookmarked"), "ok");
     }).catch(function(err) { _toast("Bookmark failed: " + err.message, "error"); });
   };
-  card.appendChild(bookmarkBtn);
+  actions.appendChild(bookmarkBtn);
+
+  var dlBtn = el("button", { class: "cvt-card-act", type: "button",
+    title: dlUrl ? "Download the latest version's primary file"
+                 : "This model has no downloadable file",
+    style: dlUrl ? {} : { opacity: ".4", cursor: "not-allowed" } }, "\u2193");
+  dlBtn.onclick = function(e) {
+    e.stopPropagation();
+    if (!dlUrl || !version) { _toast("No downloadable file on this model", "error"); return; }
+    _quickDownload(m, version, primary);
+  };
+  actions.appendChild(dlBtn);
+  card.appendChild(actions);
   // Content-band badge (PG / PG-13 / R / X / XXX) with the official band colour
   card.appendChild(makeBandBadge(modelBand));
   var thumb = el("div", { class: "thumb", style: { aspectRatio: "3/4", background: "linear-gradient(135deg,#1a1a1a,#0f0f0f)" } });

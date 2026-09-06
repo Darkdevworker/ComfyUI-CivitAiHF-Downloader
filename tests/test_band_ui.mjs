@@ -144,8 +144,12 @@ eq(pgCard.classList.contains("cvt-blur"), false, "PG stays visible at threshold 
 console.log("ticking a band never searches on its own");
 // static: the browse panel lives in civitai.js, which imports ComfyUI modules
 const panel = fs.readFileSync(path.join(here, "..", "js", "civitai.js"), "utf8");
+// Just the band row. It runs up to the chip row, which legitimately does
+// call _resetAndSearch — removing a chip is meant to re-run the search,
+// unlike ticking a band.
+const bandRowEnd = panel.indexOf("sb.appendChild(ratingRow);");
 const bandRow = panel.slice(panel.indexOf("// ---- Content band row"),
-                            panel.indexOf("pane.appendChild(sb);"));
+                            bandRowEnd + "sb.appendChild(ratingRow);".length);
 function panelHas(re, label) {
   if (re.test(bandRow)) { pass++; } else { fail++; console.log(`  x ${label} — not found: ${re}`); }
 }
