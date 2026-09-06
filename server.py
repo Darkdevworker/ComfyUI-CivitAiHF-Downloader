@@ -40,6 +40,86 @@ def _cached_api_get(key, fetch_fn, ttl=None):
 routes = PromptServer.instance.routes
 
 
+# ── Path safety & off-loop helpers ─────────────────────────────────────
+# Every route that reads or removes a file on the user's behalf goes through
+# _safe_model_path(), and every blocking call goes through run_in_executor,
+# so a request can neither reach outside the models directories nor stall
+# ComfyUI's single-threaded event loop.
+
+def _model_roots():
+    """Real paths of every directory this extension may touch."""
+    roots = []
+    try:
+        if getattr(folder_paths, "models_dir", None):
+            roots.append(os.path.realpath(folder_paths.models_dir))
+    except Exception:
+        pass
+    try:
+        for entry in getattr(folder_paths, "folder_names_and_paths", {}).values():
+            paths = entry[0] if isinstance(entry, (list, tuple)) else entry
+            if isinstance(paths, str):
+                paths = [paths]
+            for candidate in paths or []:
+                try:
+                    roots.append(os.path.realpath(candidate))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    seen, out = set(), []
+    for r in roots:
+        key = os.path.normcase(r)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+def _safe_model_path(path, must_exist=True):
+    """
+    Resolve a user-supplied path and confirm it sits under a models dir.
+
+    Returns (ok, resolved_path_or_error_message). Relative paths are resolved
+    against the models directory, and symlinks are followed before the check,
+    so a link inside models/ cannot be used to escape it.
+    """
+    if not path or not isinstance(path, str):
+        return False, "Missing path"
+    if "\x00" in path:
+        return False, "Invalid path"
+    try:
+        if not os.path.isabs(path):
+            path = os.path.join(folder_paths.models_dir, path)
+        real = os.path.realpath(path)
+    except Exception:
+        return False, "Invalid path"
+    real_c = os.path.normcase(real)
+    for root in _model_roots():
+        root_c = os.path.normcase(root)
+        if real_c == root_c or real_c.startswith(root_c + os.sep):
+            if must_exist and not os.path.exists(real):
+                return False, "File not found"
+            return True, real
+    return False, "Path is outside the ComfyUI models directories"
+
+
+def _read_json(path):
+    """Read a JSON file, or None if it is missing/unreadable."""
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+async def _civitai_call(fn, *args):
+    """Run a blocking Civitai API call off the event loop."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: fn(*args))
+
+
 # ── Civitai Search / Browse ────────────────────────────────────────────
 
 @routes.get("/civitai/search")
@@ -108,31 +188,37 @@ async def lookup_civitai(request):
         domain = utils._get_active_domain()
 
         if hash_val:
-            info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(hash_val.strip())
+            info = await _civitai_call(
+                utils.CivitaiAPIUtils.get_model_version_info_by_hash, hash_val.strip())
             if not info:
                 return web.json_response({"error": "Not found on Civitai"}, status=404)
             return web.json_response({"kind": "version", "data": info})
 
         if version_id:
-            info = utils.CivitaiAPIUtils.get_model_version_info_by_id(int(version_id), domain)
+            info = await _civitai_call(
+                utils.CivitaiAPIUtils.get_model_version_info_by_id, int(version_id), domain)
             if not info:
                 return web.json_response({"error": "Not found on Civitai"}, status=404)
             return web.json_response({"kind": "version", "data": info})
 
         if model_id:
-            info = utils.CivitaiAPIUtils.get_model_info_by_id(int(model_id), domain)
+            info = await _civitai_call(
+                utils.CivitaiAPIUtils.get_model_info_by_id, int(model_id), domain)
             if not info:
                 return web.json_response({"error": "Not found on Civitai"}, status=404)
             return web.json_response({"kind": "model", "data": info})
 
         if model_input:
-            parsed = utils.parse_civitai_input(model_input.strip())
+            parsed = await _civitai_call(utils.parse_civitai_input, model_input.strip())
             if parsed.get("version_id"):
-                info = utils.CivitaiAPIUtils.get_model_version_info_by_id(parsed["version_id"], domain)
+                info = await _civitai_call(
+                    utils.CivitaiAPIUtils.get_model_version_info_by_id,
+                    parsed["version_id"], domain)
                 if info:
                     return web.json_response({"kind": "version", "data": info})
             if parsed.get("model_id"):
-                info = utils.CivitaiAPIUtils.get_model_info_by_id(parsed["model_id"], domain)
+                info = await _civitai_call(
+                    utils.CivitaiAPIUtils.get_model_info_by_id, parsed["model_id"], domain)
                 if info:
                     return web.json_response({"kind": "model", "data": info})
             return web.json_response({"error": "Could not parse the input or not found"}, status=400)
@@ -149,7 +235,8 @@ async def model_detail(request):
         if not model_id:
             return web.json_response({"error": "Missing id"}, status=400)
         domain = utils._get_active_domain()
-        data = utils.CivitaiAPIUtils.get_model_info_by_id(int(model_id), domain)
+        data = await _civitai_call(
+            utils.CivitaiAPIUtils.get_model_info_by_id, int(model_id), domain)
         return web.json_response(data or {})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -162,7 +249,8 @@ async def model_by_id(request):
         if not model_id:
             return web.json_response({"error": "Missing model_id"}, status=400)
         domain = utils._get_active_domain()
-        data = utils.CivitaiAPIUtils.get_model_info_by_id(int(model_id), domain)
+        data = await _civitai_call(
+            utils.CivitaiAPIUtils.get_model_info_by_id, int(model_id), domain)
         return web.json_response(data or {})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -173,10 +261,9 @@ async def local_preview(request):
     try:
         path = request.query.get("path", "")
         w = request.query.get("w", "")
-        if not path or ".." in path:
-            return web.Response(status=400, text="Invalid path")
-        if not os.path.isabs(path):
-            path = os.path.join(folder_paths.models_dir, path)
+        ok, path = _safe_model_path(path)
+        if not ok:
+            return web.Response(status=400, text=path or "Invalid path")
         if not os.path.isfile(path):
             return web.Response(status=404, text="Not found")
         ext = os.path.splitext(path)[1].lower()
@@ -286,8 +373,8 @@ async def model_version_detail(request):
         if not version_id:
             return web.json_response({"error": "Missing id"}, status=400)
         domain = utils._get_active_domain()
-        data = utils.CivitaiAPIUtils.get_model_version_info_by_id(
-            int(version_id), domain
+        data = await _civitai_call(
+            utils.CivitaiAPIUtils.get_model_version_info_by_id, int(version_id), domain
         )
         return web.json_response(data or {})
     except Exception as e:
@@ -547,8 +634,10 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
             except Exception:
                 pass
         return
+    loop = asyncio.get_event_loop()
     try:
-        vi = utils.CivitaiAPIUtils.get_model_version_info_by_id(
+        vi = await loop.run_in_executor(
+            None, utils.CivitaiAPIUtils.get_model_version_info_by_id,
             int(model_version_id), domain
         )
         if not vi:
@@ -557,7 +646,6 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
         return
 
     base = os.path.splitext(save_path)[0]
-    loop = asyncio.get_event_loop()
 
     # Inject computed hash into version info
     if file_hash:
@@ -577,8 +665,10 @@ async def _save_metadata_and_preview(model_version_id, save_path, save_metadata,
         model_id = vi.get("modelId") or (vi.get("model") or {}).get("id")
         if model_id and save_metadata:
             try:
-                mresp = utils.CivitaiAPIUtils._request_with_retry(
-                    f"https://{domain}/api/v1/models/{model_id}"
+                mresp = await loop.run_in_executor(
+                    None, lambda: utils.CivitaiAPIUtils._request_with_retry(
+                        f"https://{domain}/api/v1/models/{model_id}"
+                    )
                 )
                 model_data = mresp.json()
                 if "model" not in vi:
@@ -766,8 +856,9 @@ async def delete_model(request):
     try:
         data = await request.json()
         model_path = data.get("path")
-        if not model_path or not os.path.exists(model_path):
-            return web.json_response({"error": "File not found"}, status=404)
+        ok, model_path = _safe_model_path(model_path)
+        if not ok:
+            return web.json_response({"error": model_path or "File not found"}, status=404)
         base = os.path.splitext(model_path)[0]
         model_dir = os.path.dirname(model_path)
 
@@ -811,43 +902,48 @@ async def auto_tag(request):
     try:
         data = await request.json() if request.can_read_body else {}
         model_type = data.get("model_type", "all")
-        tagged = 0
-        types_to_process = (
-            ["checkpoints", "loras", "vae"] if model_type == "all" else [model_type]
-        )
-        for mt in types_to_process:
-            name_to_hash, _ = utils.get_local_model_maps(mt)
-            for name, fhash in name_to_hash.items():
-                full_path = folder_paths.get_full_path(mt, name)
-                if not full_path or not os.path.exists(full_path):
-                    continue
-                json_path = full_path.replace(".safetensors", ".civitai.json")
-                if os.path.exists(json_path):
-                    continue
-                try:
-                    info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(fhash)
-                    if info:
-                        with open(json_path, "w") as f:
-                            json.dump(info, f, indent=2)
-                        preview_url = None
-                        if info.get("images") and len(info["images"]) > 0:
-                            preview_url = info["images"][0].get("url")
-                        if preview_url:
-                            preview_path = full_path.replace(".safetensors", ".preview.png")
-                            if not os.path.exists(preview_path):
-                                try:
-                                    req = urllib.request.Request(
-                                        preview_url,
-                                        headers={"User-Agent": "Mozilla/5.0"},
-                                    )
-                                    with urllib.request.urlopen(req, timeout=15) as resp:
-                                        with open(preview_path, "wb") as pf:
-                                            pf.write(resp.read())
-                                except Exception:
-                                    pass
-                        tagged += 1
-                except Exception:
-                    continue
+        def _work():
+            tagged = 0
+            types_to_process = (
+                ["checkpoints", "loras", "vae"] if model_type == "all" else [model_type]
+            )
+            for mt in types_to_process:
+                name_to_hash, _ = utils.get_local_model_maps(mt)
+                for name, fhash in name_to_hash.items():
+                    full_path = folder_paths.get_full_path(mt, name)
+                    if not full_path or not os.path.exists(full_path):
+                        continue
+                    json_path = full_path.replace(".safetensors", ".civitai.json")
+                    if os.path.exists(json_path):
+                        continue
+                    try:
+                        info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(fhash)
+                        if info:
+                            with open(json_path, "w") as f:
+                                json.dump(info, f, indent=2)
+                            preview_url = None
+                            if info.get("images") and len(info["images"]) > 0:
+                                preview_url = info["images"][0].get("url")
+                            if preview_url:
+                                preview_path = full_path.replace(".safetensors", ".preview.png")
+                                if not os.path.exists(preview_path):
+                                    try:
+                                        req = urllib.request.Request(
+                                            preview_url,
+                                            headers={"User-Agent": "Mozilla/5.0"},
+                                        )
+                                        with urllib.request.urlopen(req, timeout=15) as resp:
+                                            with open(preview_path, "wb") as pf:
+                                                pf.write(resp.read())
+                                    except Exception:
+                                        pass
+                            tagged += 1
+                    except Exception:
+                        continue
+            return tagged
+
+        loop = asyncio.get_event_loop()
+        tagged = await loop.run_in_executor(None, _work)
         return web.json_response({"success": True, "tagged": tagged})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -858,50 +954,55 @@ async def auto_tag(request):
 @routes.post("/civitai/cleanup-scan")
 async def cleanup_scan(request):
     try:
-        issues = []
-        for mt in ["checkpoints", "loras", "vae"]:
-            try:
-                names = folder_paths.get_filename_list(mt)
-            except Exception:
-                continue
-            for name in names:
-                full = folder_paths.get_full_path(mt, name)
-                if not full or not os.path.exists(full):
+        def _work():
+            issues = []
+            for mt in ["checkpoints", "loras", "vae"]:
+                try:
+                    names = folder_paths.get_filename_list(mt)
+                except Exception:
                     continue
-                base = full.rsplit(".", 1)[0]
-                if full.endswith(".safetensors"):
-                    json_path = base + ".civitai.json"
-                    if os.path.exists(json_path):
-                        try:
-                            with open(json_path) as f:
-                                content = json.load(f)
-                            if not content or not content.get("id"):
+                for name in names:
+                    full = folder_paths.get_full_path(mt, name)
+                    if not full or not os.path.exists(full):
+                        continue
+                    base = full.rsplit(".", 1)[0]
+                    if full.endswith(".safetensors"):
+                        json_path = base + ".civitai.json"
+                        if os.path.exists(json_path):
+                            try:
+                                with open(json_path) as f:
+                                    content = json.load(f)
+                                if not content or not content.get("id"):
+                                    issues.append({
+                                        "type": "orphan_sidecar",
+                                        "path": json_path,
+                                        "message": "Empty or invalid .civitai.json",
+                                    })
+                            except Exception:
                                 issues.append({
-                                    "type": "orphan_sidecar",
+                                    "type": "corrupt_json",
                                     "path": json_path,
-                                    "message": "Empty or invalid .civitai.json",
+                                    "message": "Corrupt .civitai.json",
                                 })
-                        except Exception:
+                    else:
+                        orphan_json = base + ".civitai.json"
+                        if os.path.exists(orphan_json):
                             issues.append({
-                                "type": "corrupt_json",
-                                "path": json_path,
-                                "message": "Corrupt .civitai.json",
+                                "type": "orphan_sidecar",
+                                "path": orphan_json,
+                                "message": "Orphan .civitai.json (no model found)",
                             })
-                else:
-                    orphan_json = base + ".civitai.json"
-                    if os.path.exists(orphan_json):
-                        issues.append({
-                            "type": "orphan_sidecar",
-                            "path": orphan_json,
-                            "message": "Orphan .civitai.json (no model found)",
-                        })
-                    orphan_preview = base + ".preview.png"
-                    if os.path.exists(orphan_preview):
-                        issues.append({
-                            "type": "orphan_preview",
-                            "path": orphan_preview,
-                            "message": "Orphan .preview.png (no model found)",
-                        })
+                        orphan_preview = base + ".preview.png"
+                        if os.path.exists(orphan_preview):
+                            issues.append({
+                                "type": "orphan_preview",
+                                "path": orphan_preview,
+                                "message": "Orphan .preview.png (no model found)",
+                            })
+            return issues
+
+        loop = asyncio.get_event_loop()
+        issues = await loop.run_in_executor(None, _work)
         return web.json_response({"success": True, "issues": issues, "total": len(issues)})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -913,11 +1014,17 @@ async def cleanup_delete(request):
         data = await request.json()
         paths = data.get("paths", [])
         deleted = 0
+        denied = []
         for p in paths:
-            if os.path.exists(p) and os.path.isfile(p):
-                os.remove(p)
+            ok, resolved = _safe_model_path(p)
+            if not ok:
+                denied.append(str(p))
+                continue
+            if os.path.isfile(resolved):
+                os.remove(resolved)
                 deleted += 1
-        return web.json_response({"success": True, "deleted": deleted})
+        return web.json_response({"success": True, "deleted": deleted,
+                                  "denied": denied})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -927,56 +1034,61 @@ async def cleanup_delete(request):
 @routes.post("/civitai/auto-organize")
 async def auto_organize(request):
     try:
-        moved = 0
-        for mt in ["loras", "checkpoints", "vae"]:
-            names = folder_paths.get_filename_list(mt)
-            name_to_hash, _ = utils.get_local_model_maps(mt)
-            for name in names:
-                fhash = name_to_hash.get(name)
-                if not fhash:
-                    continue
-                try:
-                    info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(fhash)
-                except Exception:
-                    continue
-                if not info:
-                    continue
-                cat = (info.get("model") or {}).get("type", "")
-                creator = ""
-                if info.get("model") and info["model"].get("creator"):
-                    creator = info["model"]["creator"].get("username", "")
-                base_model_info = ""
-                for tag in (info.get("model") or {}).get("tags", []):
-                    if tag.get("name", "").lower() in (
-                        "sd 1.5", "sdxl", "sd 2", "flux", "pixart", "playground v2"
-                    ):
-                        base_model_info = tag["name"].replace(" ", "_").lower()
-                        break
-                folder_parts = [p for p in [cat, base_model_info, creator] if p]
-                if not folder_parts:
-                    continue
-                target_subdir = "/".join(folder_parts)
-                src = folder_paths.get_full_path(mt, name)
-                if not src:
-                    continue
-                models_dir = folder_paths.models_dir
-                dest_dir = os.path.join(models_dir, mt, target_subdir)
-                os.makedirs(dest_dir, exist_ok=True)
-                dest = os.path.join(dest_dir, name)
-                if os.path.normpath(src) == os.path.normpath(dest):
-                    continue
-                if os.path.exists(dest):
-                    continue
-                try:
-                    shutil.move(src, dest)
-                    for ext in [".civitai.json", ".preview.png"]:
-                        s = src.replace(".safetensors", ext)
-                        if os.path.exists(s):
-                            d = dest.replace(".safetensors", ext)
-                            os.rename(s, d)
-                    moved += 1
-                except Exception:
-                    pass
+        def _work():
+            moved = 0
+            for mt in ["loras", "checkpoints", "vae"]:
+                names = folder_paths.get_filename_list(mt)
+                name_to_hash, _ = utils.get_local_model_maps(mt)
+                for name in names:
+                    fhash = name_to_hash.get(name)
+                    if not fhash:
+                        continue
+                    try:
+                        info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(fhash)
+                    except Exception:
+                        continue
+                    if not info:
+                        continue
+                    cat = (info.get("model") or {}).get("type", "")
+                    creator = ""
+                    if info.get("model") and info["model"].get("creator"):
+                        creator = info["model"]["creator"].get("username", "")
+                    base_model_info = ""
+                    for tag in (info.get("model") or {}).get("tags", []):
+                        if tag.get("name", "").lower() in (
+                            "sd 1.5", "sdxl", "sd 2", "flux", "pixart", "playground v2"
+                        ):
+                            base_model_info = tag["name"].replace(" ", "_").lower()
+                            break
+                    folder_parts = [p for p in [cat, base_model_info, creator] if p]
+                    if not folder_parts:
+                        continue
+                    target_subdir = "/".join(folder_parts)
+                    src = folder_paths.get_full_path(mt, name)
+                    if not src:
+                        continue
+                    models_dir = folder_paths.models_dir
+                    dest_dir = os.path.join(models_dir, mt, target_subdir)
+                    os.makedirs(dest_dir, exist_ok=True)
+                    dest = os.path.join(dest_dir, name)
+                    if os.path.normpath(src) == os.path.normpath(dest):
+                        continue
+                    if os.path.exists(dest):
+                        continue
+                    try:
+                        shutil.move(src, dest)
+                        for ext in [".civitai.json", ".preview.png"]:
+                            s = src.replace(".safetensors", ext)
+                            if os.path.exists(s):
+                                d = dest.replace(".safetensors", ext)
+                                os.rename(s, d)
+                        moved += 1
+                    except Exception:
+                        pass
+            return moved
+
+        loop = asyncio.get_event_loop()
+        moved = await loop.run_in_executor(None, _work)
         return web.json_response({"success": True, "moved": moved})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -1277,20 +1389,21 @@ async def export_model_list(request):
 async def model_info(request):
     try:
         filepath = request.query.get("path", "")
-        if not filepath or not os.path.exists(filepath):
-            return web.json_response({"error": "File not found"}, status=404)
-        hash_val = utils.CivitaiAPIUtils.calculate_sha256(filepath)
+        ok, filepath = _safe_model_path(filepath)
+        if not ok:
+            return web.json_response({"error": filepath or "File not found"}, status=404)
+        loop = asyncio.get_event_loop()
+        # Hashing a multi-GB checkpoint must never sit on the event loop.
+        hash_val = await loop.run_in_executor(
+            None, utils.CivitaiAPIUtils.calculate_sha256, filepath
+        )
         info = None
         if hash_val:
-            info = utils.CivitaiAPIUtils.get_model_version_info_by_hash(hash_val)
-        json_path = filepath.replace(".safetensors", ".civitai.json")
-        metadata = None
-        if os.path.exists(json_path):
-            try:
-                with open(json_path) as f:
-                    metadata = json.load(f)
-            except Exception:
-                pass
+            info = await loop.run_in_executor(
+                None, utils.CivitaiAPIUtils.get_model_version_info_by_hash, hash_val
+            )
+        json_path = os.path.splitext(filepath)[0] + ".civitai.json"
+        metadata = await loop.run_in_executor(None, _read_json, json_path)
         return web.json_response({
             "hash": hash_val,
             "civitai": info,
@@ -1536,10 +1649,10 @@ async def get_local_previews(request):
     """Return all preview images + per-image prompts for a local model."""
     try:
         path = request.query.get("path", "")
-        if not path or ".." in path:
-            return web.json_response({"images": []})
-        if not os.path.isabs(path):
-            path = os.path.join(folder_paths.models_dir, path)
+        loop = asyncio.get_event_loop()
+        ok, path = _safe_model_path(path)
+        if not ok:
+            return web.json_response({"images": [], "error": path})
         base = os.path.splitext(path)[0]
         # Load metadata for prompts
         json_path = base + ".civitai.json"
@@ -1593,10 +1706,9 @@ async def get_local_metadata(request):
     """Load .civitai.json metadata for a specific local model (lazy load)."""
     try:
         path = request.query.get("path", "")
-        if not path or ".." in path:
-            return web.json_response({"metadata": {}})
-        if not os.path.isabs(path):
-            path = os.path.join(folder_paths.models_dir, path)
+        ok, path = _safe_model_path(path)
+        if not ok:
+            return web.json_response({"metadata": {}, "error": path})
         loop = asyncio.get_event_loop()
         metadata = await loop.run_in_executor(None, _load_sidecar, path)
         return web.json_response({"metadata": metadata})
