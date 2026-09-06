@@ -157,7 +157,10 @@ panelHasNot(/_resetAndSearch/, "ticking a band does not re-run the search");
 panelHasNot(/_bandTimer/, "no debounce state left");
 panelHasNot(/_runSearch/, "no search call of any kind from the band row");
 panelHas(/S\.civitai\.nsfw = ratingRow\._getVal\(\);/, "the tick is recorded for the next search");
-panelHas(/press Search to apply/, "the row says the button applies it");
+panelHasNot(/press Search to apply/, "the 'press Search to apply' hint is gone");
+panelHasNot(/"Bands:"/, "and so is the label that shared the line with the row");
+panelHas(/sb\.appendChild\(ratingRow\);/, "the row is given the search bar's whole width");
+panelHasNot(/cvt-row[^\n]*ratingRow/, "it no longer sits inside a row that splits the space");
 eq((panel.match(/S\.civitai\.nsfw = ratingRow\._getVal\(\);/g) || []).length, 2,
    "the band value is read both on tick and when a search runs");
 eq(panel.indexOf("_resetAndSearch(); }, 350)"), -1, "the old debounced call is gone");

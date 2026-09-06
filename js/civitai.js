@@ -866,14 +866,14 @@ function renderBrowse(pane) {
   // ---- Content band row (PG · PG-13 · R · X · XXX) ----
   // Ticking a band only records the choice. Nothing searches until the
   // Search button is pressed, so ticking several bands costs one request.
+  // The row takes the search bar's full width: it used to share a line with
+  // a label and a hint about the Search button, which squeezed the five
+  // bands into whatever space was left over.
   var ratingRow = buildBandCheckboxes(S.civitai.nsfw || "", function() {
     S.civitai.nsfw = ratingRow._getVal();
   });
-  sb.appendChild(el("div", { class: "cvt-row", style: { marginTop:"4px" } },
-    el("span", { style: { fontSize:"10px", color:"var(--civ-text-mute)", marginRight:"2px" } }, "Bands:"),
-    ratingRow,
-    el("span", { style: { fontSize:"9px", color:"var(--civ-text-mute)", opacity:".7", marginLeft:"4px" } },
-      "press Search to apply")));
+  ratingRow.style.marginTop = "2px";
+  sb.appendChild(ratingRow);
   pane.appendChild(sb);
 
   var grid = el("div", { class: "cvt-grid", id: "cvt-grid" });

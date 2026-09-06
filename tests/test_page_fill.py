@@ -127,10 +127,16 @@ def run_search(source, **query):
     return out, calls
 
 
-def model(mid, band):
+def model(mid, band, name=None, tags=None, description=None):
     """A one-version model whose only preview sits in `band`."""
-    return {"id": mid, "name": f"m{mid}", "modelVersions": [
-        {"id": mid * 10, "images": [{"url": "u", "nsfwLevel": band}]}]}
+    m = {"id": mid, "name": name if name is not None else f"m{mid}",
+         "modelVersions": [
+             {"id": mid * 10, "images": [{"url": "u", "nsfwLevel": band}]}]}
+    if tags is not None:
+        m["tags"] = tags
+    if description is not None:
+        m["description"] = description
+    return m
 
 
 def sparse(n, start=0):
@@ -220,6 +226,42 @@ out, calls = run_search(
 eq(len(calls), 6, "it stops at the round cap rather than hammering the API")
 ok(len(out["items"]) > 1, f"and still returns more than the old one model ({len(out['items'])})")
 ok(all(c.get("limit", 0) <= 100 for c in calls), "never asking for more than Civitai allows")
+
+print("searching a creator's models by text")
+# Civitai's own query+username combination cannot be trusted: for creator
+# Marlosart it matched "Korra" but not "Hinata" or "Naruto", although both
+# appear in the name of one of that creator's models.
+match = HELPERS["_matches_query"]
+naruto = model(1, 16, name="Hinata Hyuga/ Naruto (NSFW/SFW) SDXL LORA (PONY)")
+other = model(2, 16, name="Princess Zelda (NSFW/SFW) SDXL LORA (PONY)")
+ok(match(naruto, "Naruto"), "a word in the name matches")
+ok(match(naruto, "naruto"), "case does not matter")
+ok(not match(other, "Naruto"), "and a model without it does not")
+ok(match(naruto, "Hinata Naruto"), "every word has to be there")
+ok(not match(naruto, "Naruto Sasuke"), "but one missing word rules it out")
+ok(match(other, ""), "an empty query matches everything")
+ok(match(model(3, 1, name="X", tags=["naruto"]), "naruto"), "a tag matches")
+ok(match(model(4, 1, name="X", description="a Naruto LoRA"), "naruto"),
+   "and so does the description")
+
+pool = [naruto, other, model(5, 1, name="Korra / The Legend of Korra")]
+out, calls = run_search(
+    lambda p, n: page(pool if n == 1 else [], None, 900),
+    **{"limit": "24", "username": "Marlosart", "query": "Naruto", "want": "24"})
+ok(all("query" not in c for c in calls),
+   "the text is no longer handed to Civitai alongside the creator")
+ok(all(c.get("username") == "Marlosart" for c in calls),
+   "the creator still is")
+eq([m["id"] for m in out["items"]], [1],
+   "and the model the old combination could not find is returned")
+
+print("  without a creator, Civitai still does the text search")
+out, calls = run_search(
+    lambda p, n: page([naruto, other] if n == 1 else [], None, 900),
+    **{"limit": "24", "query": "Naruto", "want": "24"})
+ok(all(c.get("query") == "Naruto" for c in calls),
+   "the query goes upstream, where its ranking is better than a substring match")
+eq(len(out["items"]), 2, "and nothing is filtered out here")
 
 print("it stops when the results run out, and says so")
 out, calls = run_search(

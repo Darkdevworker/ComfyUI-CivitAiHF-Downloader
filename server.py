@@ -251,11 +251,28 @@ def _band_of_model(model):
     return worst
 
 
-def _filter_models(items, bands):
-    """Keep the models whose band is ticked. An empty selection keeps all."""
-    if not bands:
-        return list(items or [])
-    return [m for m in (items or []) if _band_of_model(m) in bands]
+def _matches_query(model, needle):
+    """Every word of `needle` must appear in the name, a tag or the blurb."""
+    if not needle:
+        return True
+    words = str(needle).lower().split()
+    tags = model.get("tags") or []
+    hay = " ".join([
+        str(model.get("name") or ""),
+        " ".join(str(t) for t in tags),
+        str(model.get("description") or ""),
+    ]).lower()
+    return all(w in hay for w in words)
+
+
+def _filter_models(items, bands, needle=""):
+    """Keep the models whose band is ticked and whose text matches."""
+    kept = list(items or [])
+    if bands:
+        kept = [m for m in kept if _band_of_model(m) in bands]
+    if needle:
+        kept = [m for m in kept if _matches_query(m, needle)]
+    return kept
 
 
 def _next_chunk(need, fetched, passed, floor=12, ceiling=100):
@@ -293,7 +310,13 @@ async def search_civitai(request):
 
         params = {}
 
-        if query:
+        # Civitai's own query+username combination cannot be trusted: asked
+        # for creator Marlosart it matched "Korra" but not "Hinata" or
+        # "Naruto", although both are in the name of one of that creator's
+        # models. So when a creator is named the text is matched here
+        # instead of upstream, where it behaves the way the cards read.
+        local_query = query if (query and username) else ""
+        if query and not username:
             params["query"] = query
         if model_type and model_type.lower() != "any":
             params["types"] = model_type
@@ -338,7 +361,7 @@ async def search_civitai(request):
             data = (await loop.run_in_executor(None, _fetch_search, round_params)).json() or {}
             raw = data.get("items") or []
             meta = data.get("metadata") or {}
-            kept = _filter_models(raw, bands)
+            kept = _filter_models(raw, bands, local_query)
             collected.extend(kept)
             fetched += len(raw)
             passed += len(kept)
