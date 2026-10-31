@@ -90,6 +90,8 @@ const code = [
   // the naming-template helpers, so the card's one-click download can be
   // driven both with and without a template configured
   slice("/* ── Naming templates", "// ── 3. DOWNLOADS ─"),
+  // and the availability light, which the card now shows
+  slice("/* ── Can this be downloaded?", "/* ── Naming templates"),
   slice("function _quickDownload(m, version, file) {", "\n// ── Detail Modal ──"),
   "let __toasts = [], __posts = [];",
   "function _toast(msg, kind) { __toasts.push([msg, kind]); }",
@@ -111,12 +113,13 @@ const code = [
   "return { _card: _card, _quickDownload: _quickDownload,",
   "         toasts: () => __toasts, posts: () => __posts,",
   "         setTemplate: function (v) { S.settings.nameTemplate = v; },",
+  "         _dlDot: _dlDot, _dlLight: _dlLight,",
   "         reset: () => { __toasts = []; __posts = []; } };",
 ].join("\n");
 
 const made = new Function("document", "Node", code)(shimDocument, ShimEl);
 const { _card, _quickDownload, toasts: seenToasts, posts: seenPosts, reset,
-        setTemplate } = made;
+        setTemplate, _dlDot, _dlLight } = made;
 
 // _api is stubbed with a resolved promise, so its .then runs on a microtask
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -198,6 +201,56 @@ const bare = _card({ id: 2, name: "Bare", type: "Checkpoint" });
 const bareActs = bare.children.filter((c) => c.className === "cvt-card-actions")[0];
 eq(bareActs.children.length, 2, "both buttons still render");
 eq(bareActs.children[1].title, "This model has no downloadable file", "with the download disabled");
+
+console.log("every card shows whether it can be downloaded");
+function metaOf(c) {
+  const body = c.children.filter((x) => x.className === "body")[0];
+  return body.children.filter((x) => x.className === "meta")[0];
+}
+function dotOf(c) {
+  return metaOf(c).children.filter((x) => x.className === "cvt-dl-dot")[0];
+}
+const plain = _card(MODEL);
+ok(!!dotOf(plain), "there is a light on the card");
+eq(dotOf(plain).style.background, _dlLight("green").color,
+   "an ordinary model is green");
+ok(/download/i.test(dotOf(plain).title), "and says so on hover");
+
+// This is what the server sends for a Buzz-locked version.
+const locked = Object.assign({}, MODEL, {
+  dl_status: { level: "yellow",
+               reason: "Early Access — unlock it with Buzz on Civitai, then download." },
+});
+const lockedCard = _card(locked);
+eq(dotOf(lockedCard).style.background, _dlLight("yellow").color,
+   "a Buzz-locked model is yellow, not red");
+ok(/Buzz/.test(dotOf(lockedCard).title), "and hovering explains why");
+
+const gone = Object.assign({}, MODEL, {
+  modelVersions: [{ id: 991 }],
+  dl_status: { level: "red", reason: "This model has been taken down, so it cannot be downloaded." },
+});
+const goneCard = _card(gone);
+eq(dotOf(goneCard).style.background, _dlLight("red").color, "a taken-down model is red");
+eq(goneCard.children.filter((c) => c.className === "cvt-card-actions")[0]
+     .children[1].textContent, "\u26D4",
+   "and its download button says so instead of offering an arrow");
+
+reset();
+goneCard.children.filter((c) => c.className === "cvt-card-actions")[0]
+  .children[1].onclick({ stopPropagation() {} });
+eq(seenPosts().length, 0, "clicking it sends nothing");
+ok(/taken down/i.test(seenToasts()[0][0]), "and the toast repeats the reason, not '400'");
+
+const lockedNoUrl = Object.assign({}, MODEL, {
+  modelVersions: [{ id: 991 }],
+  dl_status: { level: "yellow", reason: "Early Access — unlock it with Buzz" },
+});
+reset();
+_card(lockedNoUrl).children.filter((c) => c.className === "cvt-card-actions")[0]
+  .children[1].onclick({ stopPropagation() {} });
+ok(/Buzz/.test(seenToasts()[0][0]),
+   "a locked model explains what would unblock it");
 
 console.log("bookmarking still works, and stays out of the card's click");
 reset();

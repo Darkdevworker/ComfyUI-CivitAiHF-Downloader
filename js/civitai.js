@@ -454,6 +454,8 @@ function buildUI() {
     S.settings.imageQuality = cfg.image_quality || "balanced";
     _setImageQuality(S.settings.imageQuality);
     S.settings.nameTemplate = cfg.name_template || "";
+    S.settings.domain = cfg.network_choice === "red" ? "civitai.red"
+                      : cfg.network_choice === "work" ? "civitai.work" : "civitai.com";
     S.settings.savedSearches = cfg.saved_searches || [];
     S.settings.refreshAfterDownload = cfg.refresh_after_download !== false;
   }).catch(function(){});
@@ -1373,13 +1375,20 @@ function _card(m) {
   };
   actions.appendChild(bookmarkBtn);
 
+  var dlLevel = ((m.dl_status || {}).level) || "green";
   var dlBtn = el("button", { class: "cvt-card-act", type: "button",
     title: dlUrl ? "Download the latest version's primary file"
-                 : "This model has no downloadable file",
-    style: dlUrl ? {} : { opacity: ".4", cursor: "not-allowed" } }, "\u2193");
+                 : ((m.dl_status || {}).reason || "This model has no downloadable file"),
+    style: dlUrl ? {} : { opacity: ".4", cursor: "not-allowed" } },
+    dlUrl ? "\u2193" : (dlLevel === "yellow" ? "\uD83D\uDD12" : "\u26D4"));
   dlBtn.onclick = function(e) {
     e.stopPropagation();
-    if (!dlUrl || !version) { _toast("No downloadable file on this model", "error"); return; }
+    if (!dlUrl || !version) {
+      // A locked model is not a broken one — say what would unblock it.
+      _toast((m.dl_status && m.dl_status.reason)
+             || "No downloadable file on this model", "error");
+      return;
+    }
     _quickDownload(m, version, primary);
   };
   actions.appendChild(dlBtn);
@@ -1399,6 +1408,7 @@ function _card(m) {
     el("div", { class: "meta" },
       _creatorSpan((m.creator && m.creator.username) || ""),
       el("span", {}, m.type || "?"),
+      _dlDot(m),
       makeBandBadge(modelBand))));
   card.onclick = function() { openDetail(m); };
   return card;
@@ -1527,6 +1537,29 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
   var statusLine = el("div", { style: { fontSize:"9.5px", color:"var(--civ-text-dim)", marginTop:"3px" } });
   right.appendChild(statusLine);
 
+  // Whether this can actually be downloaded, and what would unblock it.
+  var dlNotice = el("div", { class: "cvt-dl-notice", style: { display: "none" } });
+  right.appendChild(dlNotice);
+  function _showDlNotice(st) {
+    var level = (st && st.level) || "green";
+    dlNotice.style.display = level === "green" ? "none" : "";
+    dlNotice.innerHTML = "";
+    if (level === "green") return;
+    var light = _dlLight(level);
+    dlNotice.style.borderColor = light.color;
+    dlNotice.style.background = "color-mix(in srgb, " + light.color + " 12%, transparent)";
+    dlNotice.appendChild(el("span", { class: "cvt-dl-dot",
+      style: { background: light.color, boxShadow: "0 0 6px " + light.color } }));
+    dlNotice.appendChild(el("span", { style: { flex: "1" } },
+      st.reason || light.label));
+    if (level === "yellow") {
+      var url = "https://" + (S.settings.domain || "civitai.com")
+              + "/models/" + (model.id || "");
+      dlNotice.appendChild(el("a", { href: url, target: "_blank", rel: "noopener",
+        class: "cvt-dl-unlock" }, "Open on Civitai"));
+    }
+  }
+
   // ---- Files list ----
   right.appendChild(el("label", { style: { marginTop:"6px" } }, "Files"));
   var filesList = el("div", { class: "cvt-files-list" });
@@ -1629,6 +1662,11 @@ function _buildDetailModal(right, gallery, model, versions, mid) {
     });
 
     // Update subfolder auto-name from the file name (no extension)
+    // The per-version verdict is the accurate one; the model-level one only
+    // describes the newest version, so it is only used when that is on show.
+    var newestId = ((model.modelVersions || [])[0] || {}).id;
+    _showDlNotice(v.dl_status || (v.id === newestId ? model.dl_status : null));
+
     var primaryFile = vfiles.find(function(f) { return f.primary; }) || vfiles[0] || {};
     autoModelName = primaryFile.name ? _sanitizeModelName(primaryFile.name.replace(/\.[^.]+$/, ""), 80) : _sanitizeModelName(v.name || model.name || "", 50);
     if (autoCb.checked) {
@@ -2539,6 +2577,43 @@ function _hfDetail(repoIdOrData, repoType) {
     });
     left.appendChild(fl);
   }).catch(function(e) { left.innerHTML = '<div class="cvt-empty">Error: ' + e.message + '</div>'; });
+}
+
+/* ── Can this be downloaded? ────────────────────────────────────────────
+   Civitai gates some models: an Early Access model costs Buzz to unlock,
+   and some creators require a login. Rather than letting the download fail
+   and leave you guessing, every card carries a light:
+
+     green  — ready to download
+     yellow — it can be yours, but something has to happen first
+     red    — there is nothing to download
+
+   The verdict is decided on the server (one rule, one place) and arrives
+   on each search result as `dl_status`. */
+var DL_LIGHTS = {
+  green:  { color: "#4ade80", label: "Ready to download" },
+  yellow: { color: "#f0b429", label: "Needs unlocking first" },
+  red:    { color: "#f87171", label: "Cannot be downloaded" },
+};
+
+function _dlLight(level) {
+  return DL_LIGHTS[level] || DL_LIGHTS.green;
+}
+
+/** A small coloured dot; hover (or tap) for the reason. */
+function _dlDot(m, opts) {
+  opts = opts || {};
+  var st = (m && m.dl_status) || null;
+  var level = (st && st.level) || "green";
+  var light = _dlLight(level);
+  var reason = (st && st.reason) || "";
+  var dot = el("span", { class: "cvt-dl-dot", title: reason || light.label,
+    style: { background: light.color, boxShadow: "0 0 0 2px rgba(0,0,0,.35), 0 0 6px " + light.color } });
+  if (opts.withLabel && reason) {
+    return el("span", { class: "cvt-dl-line", title: reason },
+      dot, el("span", { style: { color: light.color } }, reason));
+  }
+  return dot;
 }
 
 /* ── Naming templates ──────────────────────────────────────────────────
@@ -3484,6 +3559,7 @@ function renderSettings(pane) {
   var baseSel = el("select");
   [{v:"civitai.com",l:"civitai.com (default)"},{v:"civitai.red",l:"civitai.red (mirror)"},{v:"civitai.work",l:"civitai.work (mirror)"}].forEach(function(b) { baseSel.appendChild(el("option", { value: b.v }, b.l)); });
   netGroup.appendChild(baseSel);
+  baseSel.onchange = function() { S.settings.domain = baseSel.value; };
   s.appendChild(netGroup);
 
   // Downloads: where files go, and what happens once they land

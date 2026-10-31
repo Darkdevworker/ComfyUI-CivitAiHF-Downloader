@@ -186,6 +186,102 @@ async def _civitai_call(fn, *args):
 
 # ── Civitai Search / Browse ────────────────────────────────────────────
 
+def _dl_status(model=None, version=None, file=None, has_key=False):
+    """Whether this model can be downloaded, as green / yellow / red.
+
+      green  — a file is there for the taking
+      yellow — it exists, but something has to happen first: Buzz to unlock
+               an Early Access model, or a Civitai API key to prove who you are
+      red    — there is nothing to download
+
+    Civitai publishes no single "you may download this" flag. `paidAccess` on
+    a version is what marks Early Access (Buzz), `availability` says what the
+    owner decided, and the files list is the final arbiter — a version with
+    no file cannot be fetched by any means.
+    """
+    model = model if isinstance(model, dict) else {}
+    version = version if isinstance(version, dict) else {}
+    file = file if isinstance(file, dict) else {}
+
+    availability = str(version.get("availability")
+                       or model.get("availability") or "").strip()
+    mode = str(model.get("mode") or "").strip()
+
+    # ---- red: there is nothing here, and no amount of Buzz changes that ----
+    if mode in ("TakenDown", "Deleted", "Archived"):
+        return {"level": "red",
+                "reason": "This model has been taken down, so it cannot be downloaded."}
+    if availability == "Unavailable":
+        return {"level": "red", "reason": "Civitai lists this model as unavailable."}
+    files = version.get("files") or []
+    if not file and not files:
+        if not version and not file:
+            return {"level": "red", "reason": "This model has no downloadable version."}
+        return {"level": "red", "reason": "This version has no files."}
+
+    # ---- yellow: it is real, but not yet reachable ----
+    paid = version.get("paidAccess")
+    if (isinstance(paid, dict) and paid) or availability == "EarlyAccess" \
+            or model.get("hasActivePaidAccess"):
+        return {"level": "yellow",
+                "reason": "Early Access \u2014 unlock it with Buzz on Civitai, then download."}
+    if availability == "Private":
+        return {"level": "yellow",
+                "reason": "This model is private. Add an API key for an account that can see it."}
+    if not has_key and (model.get("poi") or model.get("minor")):
+        return {"level": "yellow",
+                "reason": "Civitai wants a login for this model \u2014 add an API key in Settings."}
+
+    # ---- green ----
+    if (file.get("downloadUrl") or version.get("downloadUrl")
+            or (files and (files[0] or {}).get("downloadUrl"))):
+        return {"level": "green", "reason": "Ready to download."}
+    return {"level": "red",
+            "reason": "Civitai publishes no download link for this file."}
+
+
+def _annotate_availability(items, has_key=False):
+    """Stamp each search result with the verdict for its newest version.
+
+    Computed here so a card can show it without a second round trip, and so
+    the rule lives in exactly one place.
+    """
+    for m in items or []:
+        if not isinstance(m, dict):
+            continue
+        try:
+            m["dl_status"] = _verdict_for_model(m, has_key)
+        except Exception:
+            logger.debug("could not classify a search result", exc_info=True)
+            m["dl_status"] = {"level": "green", "reason": ""}
+    return items
+
+
+def _verdict_for_model(m, has_key=False):
+    """The green / yellow / red verdict for one search result."""
+    versions = m.get("modelVersions") or []
+    version = versions[0] if versions else {}
+    files = version.get("files") or []
+    primary = None
+    for f in files:
+        if isinstance(f, dict) and f.get("primary"):
+            primary = f
+            break
+    if primary is None and files:
+        primary = files[0]
+    return _dl_status(m, version, primary, has_key)
+
+
+def _civitai_has_key():
+    """Whether an API key is set. Never raises — the verdict is a hint on a
+    card, and a settings backend that will not answer must not be able to
+    turn a page of results into an error page."""
+    try:
+        return bool(utils.db_manager.get_setting("civitai_api_key"))
+    except Exception:
+        logger.debug("could not read the API key setting", exc_info=True)
+        return False
+
 # How many times a page may go back to Civitai. Civitai has no per-tier
 # filter (nsfwLevel is silently ignored), so the bands are applied here and a
 # narrow selection needs several batches to fill 24 slots — measured live,
@@ -376,7 +472,7 @@ async def search_civitai(request):
             chunk = _next_chunk(want - len(collected), fetched, passed)
 
         payload = {
-            "items": collected[:want],
+            "items": _annotate_availability(collected[:want], _civitai_has_key()),
             "metadata": {"nextCursor": next_cursor, "totalItems": total_items},
         }
         _api_cache_put(cache_key, payload)
@@ -642,9 +738,19 @@ async def model_versions(request):
         )
         data = resp.json()
         versions = data.get("modelVersions", [])
+        has_key = _civitai_has_key()
         for v in versions:
             v["modelName"] = data.get("name", "")
             v["modelId"] = data.get("id")
+            files = v.get("files") or []
+            primary = None
+            for f in files:
+                if isinstance(f, dict) and f.get("primary"):
+                    primary = f
+                    break
+            if primary is None and files:
+                primary = files[0]
+            v["dl_status"] = _dl_status(data, v, primary, has_key)
         return web.json_response({"items": versions})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -695,6 +801,63 @@ def _with_civitai_token(url, api_key):
     if "token=" in url:
         return url
     return url + ("&" if "?" in url else "?") + "token=" + api_key
+
+
+def _civitai_refusal(code, body):
+    """Turn one of Civitai's refusals into something worth showing.
+
+    These arrive as a small JSON body \u2014 {"error": "Early Access", "message":
+    "This asset is in Early Access. You can use Buzz access it now!"} \u2014
+    which is far more use than the status code alone.
+    """
+    detail = ""
+    try:
+        raw = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body or "")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            detail = str(parsed.get("message") or parsed.get("error") or "").strip()
+    except Exception:
+        detail = ""
+    if code == 401:
+        return detail or ("Civitai needs a login for this model \u2014 add your API key in Settings.")
+    if code == 403:
+        return (detail + " Unlock it on Civitai, then download again.") if detail \
+            else "Civitai refused this download \u2014 the model is locked behind Early Access."
+    if code == 404:
+        return "Civitai has no file at that address."
+    if code == 429:
+        return "Civitai is rate-limiting this account \u2014 wait a moment and retry."
+    return detail or ("Civitai returned HTTP %d for this download." % code)
+
+
+def _download_candidates(download_url, model_version_id, file_meta, domain):
+    """Every address we know for one file, most specific first.
+
+    Civitai exposes several, and they do not all work for every model: a
+    version may serve its primary file from /api/download/models/<id> but
+    refuse the ?type=&format= form, or the other way round. Rather than
+    betting on one, they are tried in order until one answers with a body.
+    """
+    out = []
+
+    def add(label, url):
+        if not url or not isinstance(url, str):
+            return
+        if any(u == url for _, u in out):
+            return
+        out.append((label, url))
+
+    add("the file's own link", download_url)
+    if model_version_id:
+        base = "https://%s/api/download/models/%s" % (domain, model_version_id)
+        add("the version link", base)
+        meta = (file_meta or {}).get("metadata") or {}
+        ftype, fmt = meta.get("type"), meta.get("format")
+        if ftype and fmt:
+            add("the %s/%s link" % (ftype, fmt),
+                "%s?type=%s&format=%s" % (base, urllib.parse.quote(str(ftype)),
+                                          urllib.parse.quote(str(fmt))))
+    return out
 
 
 def _civitai_download_error(e):
@@ -760,25 +923,40 @@ async def start_download(request):
 
         loop = asyncio.get_event_loop()
 
-        # Resolve "auto" folder — fetch version info to determine type (async)
+        # Resolve "auto" folder — fetch version info to determine type (async).
+        # The same response carries the file list, which also gives the
+        # download a third address to try, so it is fetched once and shared.
         loop = asyncio.get_event_loop()
+        vi = None
+        if model_version_id:
+            try:
+                vi = await loop.run_in_executor(
+                    None, utils.CivitaiAPIUtils.get_model_version_info_by_id,
+                    int(model_version_id), domain
+                )
+            except Exception:
+                logger.debug("could not fetch version info for %s", model_version_id,
+                             exc_info=True)
+                vi = None
         if not model_type or model_type == "auto":
             try:
-                if model_version_id:
-                    vi = await loop.run_in_executor(
-                        None, utils.CivitaiAPIUtils.get_model_version_info_by_id,
-                        int(model_version_id), domain
-                    )
-                    if vi:
-                        civitai_type = (vi.get("model") or {}).get("type", "")
-                        model_type = {
-                            "Checkpoint": "checkpoints", "LORA": "loras", "LoCon": "loras",
-                            "DoRA": "loras", "VAE": "vae", "Controlnet": "controlnet",
-                            "TextualInversion": "embeddings", "Hypernetwork": "hypernetworks",
-                            "Upscaler": "upscale_models", "MotionModule": "animatediff_models",
-                        }.get(civitai_type, "other")
+                civitai_type = (vi.get("model") or {}).get("type", "")
+                model_type = {
+                    "Checkpoint": "checkpoints", "LORA": "loras", "LoCon": "loras",
+                    "DoRA": "loras", "VAE": "vae", "Controlnet": "controlnet",
+                    "TextualInversion": "embeddings", "Hypernetwork": "hypernetworks",
+                    "Upscaler": "upscale_models", "MotionModule": "animatediff_models",
+                }.get(civitai_type, "other")
             except Exception:
                 model_type = "loras"
+
+        # Which file is being asked for, so the download can fall back to the
+        # ?type=&format= form of the URL if the plain one refuses.
+        file_meta = None
+        for f in (vi or {}).get("files") or []:
+            if isinstance(f, dict) and (f.get("name") or "") == filename:
+                file_meta = f
+                break
 
         # The destination folder, subfolder and filename are all chosen in
         # the download modal, so they are built into a path through one
@@ -852,27 +1030,77 @@ async def start_download(request):
             if resume_from:
                 req_headers["Range"] = "bytes=%d-" % resume_from
 
-            # The key is added to this request only — the task, and the retry
-            # payload the UI keeps, store the URL without it.
-            req = urllib.request.Request(
-                _with_civitai_token(download_url, api_key),
-                headers=req_headers,
-            )
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                content_type = (resp.headers.get("Content-Type") or "").lower()
-                if "text/html" in content_type:
-                    raise RuntimeError(
-                        "Civitai returned a login page instead of the model. "
-                        "This model requires authentication \u2014 set a valid Civitai API key in Settings."
-                    )
-                if resume_from and resp.status != 206:
+            def _open(url, headers):
+                # The key is added to this request only — the task, and the
+                # retry payload the UI keeps, store the URL without it.
+                return urllib.request.urlopen(
+                    urllib.request.Request(
+                        _with_civitai_token(url, api_key), headers=headers),
+                    timeout=300,
+                )
+
+            # Try every address we know for this file. Civitai is not
+            # consistent about which one works, so one refusing is not the
+            # same as the model being undownloadable.
+            candidates = _download_candidates(
+                download_url, model_version_id, file_meta, domain)
+            resp = None
+            used = ""
+            last_error = None
+            for label, url in candidates:
+                try:
+                    opened = _open(url, req_headers)
+                except urllib.error.HTTPError as e:
+                    try:
+                        body = e.read()
+                    except Exception:
+                        body = b""
+                    refusal = _civitai_refusal(e.code, body)
+                    # 401 and 403 are Civitai refusing the *model*, not this
+                    # address — no other URL will change the answer.
+                    if e.code in (401, 403):
+                        raise RuntimeError(refusal)
+                    logger.debug("download strategy %r failed: HTTP %s", label, e.code)
+                    last_error = "%s (HTTP %s): %s" % (label, e.code, refusal)
+                    continue
+                except Exception as e:
+                    logger.debug("download strategy %r failed", label, exc_info=True)
+                    last_error = "%s: %s" % (label, e)
+                    continue
+
+                if "text/html" in (opened.headers.get("Content-Type") or "").lower():
+                    opened.close()
+                    last_error = ("%s: Civitai returned a login page instead of the "
+                                  "model — set a Civitai API key in Settings" % label)
+                    continue
+
+                if resume_from and opened.status != 206:
                     # The server did not honour Range, so what is on disk is
                     # not a prefix of this response — start over rather than
                     # splice two different files together.
+                    opened.close()
                     logger.debug("resume refused for %s (HTTP %s), starting over",
-                                 save_path, resp.status)
+                                 save_path, opened.status)
                     resume_from = 0
                     part = None
+                    req_headers.pop("Range", None)
+                    try:
+                        opened = _open(url, req_headers)
+                    except Exception as e:
+                        last_error = "%s: %s" % (label, e)
+                        continue
+
+                resp = opened
+                used = label
+                break
+
+            if resp is None:
+                raise RuntimeError(
+                    last_error or "Civitai did not return a download for this model.")
+            if task_id in DOWNLOAD_TASKS:
+                DOWNLOAD_TASKS[task_id]["strategy"] = used
+
+            try:
                 total = int(resp.headers.get("Content-Length", 0))
                 content_range = resp.headers.get("Content-Range", "")
                 if content_range and "/" in content_range:
@@ -952,6 +1180,11 @@ async def start_download(request):
                     except Exception:
                         logger.debug("could not clear the resume marker at %s",
                                      part_path, exc_info=True)
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    logger.debug("could not close the download response", exc_info=True)
             return False
 
         async def _download():

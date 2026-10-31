@@ -81,7 +81,7 @@ print("wiring")
 ok("import urllib.error" in SRC, "urllib.error is imported")
 ok("except urllib.error.HTTPError as e:" in SRC, "HTTP errors are caught specifically")
 ok('_civitai_download_error(e)' in SRC, "they go through the friendly message")
-ok("_with_civitai_token(download_url, api_key)" in SRC, "the request URL carries the key")
+ok("_with_civitai_token(url, api_key)" in SRC, "the request URL carries the key")
 ok('"url": download_url,' in SRC, "the stored task keeps the URL without the key")
 ok('"retry_payload"' in SRC and "token=" not in SRC.split('"retry_payload"')[1].split("},")[0],
    "the retry payload the UI keeps has no token in it")
