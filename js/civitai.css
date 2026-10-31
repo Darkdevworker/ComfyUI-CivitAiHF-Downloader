@@ -1061,12 +1061,17 @@ img.nsfw:hover { filter: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* Resume and hash verification notes on a download row */
+.cvt-job-note { display: flex; flex-wrap: wrap; gap: 8px; font-size: 10px; }
+.cvt-job-resumed { color: var(--civ-accent-dim); }
+.cvt-job-warn { color: #f0b429; }
+.cvt-job-ok { color: #7bd88f; }
+
 /* Download availability light */
 .cvt-dl-dot {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
   flex-shrink: 0;
 }
-.cvt-dl-line { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; }
 .cvt-dl-notice {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
   margin-top: 6px; padding: 6px 8px; border-radius: 5px;

@@ -92,10 +92,15 @@ eq(dl_status(m2, locked, locked["files"][0])["level"], "yellow",
 ok("Buzz" in dl_status(m2, locked, locked["files"][0])["reason"],
    "and the reason says what unlocks it")
 
+# hasActivePaidAccess is a MODEL-level flag: it means "some version of this
+# is paid". Model 958009's newest version downloads freely while two older
+# ones are Early Access, so reading the model flag marked a free file yellow.
 m3 = {"id": 30, "name": "Paid", "hasActivePaidAccess": True,
       "modelVersions": [{"id": 3, "files": [{"downloadUrl": "https://x/3"}]}]}
 eq(dl_status(m3, m3["modelVersions"][0], m3["modelVersions"][0]["files"][0])["level"],
-   "yellow", "a paid-access model is yellow even without the version flag")
+   "green", "a free version of a partly-paid model is still green")
+ok(dl_status(m3, m3["modelVersions"][0], m3["modelVersions"][0]["files"][0])["reason"]
+   == "Ready to download.", "and says nothing about Buzz")
 
 eq(dl_status({"availability": "EarlyAccess"},
              {"availability": "EarlyAccess", "files": [{"downloadUrl": "https://x"}]},
@@ -156,6 +161,28 @@ exec(compile(slice_fn("_civitai_has_key"), "server.py", "exec"), ns2)
 eq(ns2["_civitai_has_key"](), False, "a failing lookup reads as 'no key'")
 eq(has_key(), True, "a working one reads the key")
 
+print("every version is classified, not just the newest")
+ns3 = dict(ns)
+exec(compile(slice_fn("_annotate_versions"), "server.py", "exec"), ns3)
+annotate_versions = ns3["_annotate_versions"]
+# An older version can be the paid one while the newest is free — which is
+# exactly the case the model-level flag got wrong.
+multi = {"id": 80, "name": "Mixed", "hasActivePaidAccess": True,
+         "modelVersions": [
+             {"id": 801, "files": [{"name": "new.safetensors", "downloadUrl": "https://x/801"}]},
+             {"id": 802, "paidAccess": {"permanent": True},
+              "files": [{"name": "old.safetensors", "downloadUrl": "https://x/802"}]},
+         ]}
+annotate_versions(multi)
+eq(multi["modelVersions"][0]["dl_status"]["level"], "green",
+   "the newest free version stays green")
+eq(multi["modelVersions"][1]["dl_status"]["level"], "yellow",
+   "and the older paid one is flagged on its own")
+annotate_versions({"id": 81, "modelVersions": [{"id": 811}, None, "junk"]})
+eq(len({"modelVersions": [{"id": 811}]}.get("modelVersions")), 1, "junk does not stop the rest")
+annotate_versions(None)
+ok(True, "a missing model is not an error")
+
 # ── reading Civitai's refusals ─────────────────────────────────────────
 print("Civitai's refusals are read, not just counted")
 early = b'{"error":"Early Access","message":"This asset is in Early Access. You can use Buzz access it now!"}'
@@ -204,7 +231,10 @@ dl = SRC[SRC.index('@routes.post("/civitai/download")'):SRC.index("async def _sa
 check(dl, "_download_candidates(", "the download builds a list of addresses")
 check(dl, "for label, url in candidates:", "and tries each one in turn")
 check(dl, "if e.code in (401, 403):", "a refusal of the model stops the search")
-check(dl, 'raise RuntimeError(refusal)', "with Civitai's own explanation")
+ok("err = RuntimeError(refusal)" in dl and "err.civitai_refusal = True" in dl,
+   "with Civitai's own explanation, marked so it is not re-worded")
+check(SRC, "if getattr(e, \"civitai_refusal\", False):\n        return str(e)",
+      "which _civitai_download_error passes through untouched")
 check(dl, 'DOWNLOAD_TASKS[task_id]["strategy"] = used', "the one that worked is recorded")
 check(dl, "raise RuntimeError(\n                    last_error or", "and failure reports the last attempt")
 check(dl, "finally:", "the response is always closed")
@@ -214,7 +244,16 @@ check(search, "_annotate_availability(", "a page of results is annotated")
 check(search, "_civitai_has_key()", "using whether a key is set")
 
 vers = SRC[SRC.index('@routes.get("/civitai/model-versions")'):SRC.index('@routes.get("/civitai/model-version-detail")')]
-check(vers, 'v["dl_status"] = _dl_status(', "each version in the detail list is classified")
+check(vers, "_annotate_versions(", "each version in the detail list is classified")
+
+# The modal reads /civitai/model/{id}, NOT /civitai/model-versions — the
+# verdict has to be stamped there or switching to an older Early Access
+# version shows no warning at all.
+byid = SRC[SRC.index('@routes.get("/civitai/model/{model_id}")'):]
+# up to the next route decorator — "async def" would match this handler's own
+byid = byid[:byid.index("\n@routes.")]
+check(byid, "_annotate_versions(data or {}, _civitai_has_key())",
+      "the endpoint the modal actually uses is annotated too")
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

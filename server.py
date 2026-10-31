@@ -220,11 +220,19 @@ def _dl_status(model=None, version=None, file=None, has_key=False):
         return {"level": "red", "reason": "This version has no files."}
 
     # ---- yellow: it is real, but not yet reachable ----
+    # A version's own paidAccess is the honest signal. The model-level
+    # hasActivePaidAccess only means "some version of this model is paid" —
+    # model 958009's newest version downloads freely while two older ones
+    # are Early Access, and reading the model flag marked it yellow anyway.
     paid = version.get("paidAccess")
-    if (isinstance(paid, dict) and paid) or availability == "EarlyAccess" \
-            or model.get("hasActivePaidAccess"):
+    if (isinstance(paid, dict) and paid) or availability == "EarlyAccess":
+        # Measured live, a paidAccess version refuses with 401 "requires you
+        # to be logged in" about as often as with 403 "Early Access ... Buzz",
+        # so the reason names both ways in rather than sending everyone to
+        # spend Buzz they may not need to spend.
         return {"level": "yellow",
-                "reason": "Early Access \u2014 unlock it with Buzz on Civitai, then download."}
+                "reason": "Early Access \u2014 unlock it with Buzz on Civitai, or add "
+                          "your API key, then download."}
     if availability == "Private":
         return {"level": "yellow",
                 "reason": "This model is private. Add an API key for an account that can see it."}
@@ -255,6 +263,33 @@ def _annotate_availability(items, has_key=False):
             logger.debug("could not classify a search result", exc_info=True)
             m["dl_status"] = {"level": "green", "reason": ""}
     return items
+
+
+def _annotate_versions(model_data, has_key=False):
+    """Stamp every version of a model with its own verdict.
+
+    The detail modal loads a model from /civitai/model/{id} and lets the
+    user switch between versions, so each one needs saying on its own: an
+    older version is often the Early Access one while the newest is free.
+    """
+    versions = (model_data or {}).get("modelVersions") or []
+    for v in versions:
+        if not isinstance(v, dict):
+            continue
+        try:
+            files = v.get("files") or []
+            primary = None
+            for f in files:
+                if isinstance(f, dict) and f.get("primary"):
+                    primary = f
+                    break
+            if primary is None and files:
+                primary = files[0]
+            v["dl_status"] = _dl_status(model_data, v, primary, has_key)
+        except Exception:
+            logger.debug("could not classify a version", exc_info=True)
+            v["dl_status"] = {"level": "green", "reason": ""}
+    return model_data
 
 
 def _verdict_for_model(m, has_key=False):
@@ -554,7 +589,8 @@ async def model_by_id(request):
         domain = utils._get_active_domain()
         data = await _civitai_call(
             utils.CivitaiAPIUtils.get_model_info_by_id, int(model_id), domain)
-        return web.json_response(data or {})
+        return web.json_response(
+            _annotate_versions(data or {}, _civitai_has_key()))
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -738,19 +774,10 @@ async def model_versions(request):
         )
         data = resp.json()
         versions = data.get("modelVersions", [])
-        has_key = _civitai_has_key()
         for v in versions:
             v["modelName"] = data.get("name", "")
             v["modelId"] = data.get("id")
-            files = v.get("files") or []
-            primary = None
-            for f in files:
-                if isinstance(f, dict) and f.get("primary"):
-                    primary = f
-                    break
-            if primary is None and files:
-                primary = files[0]
-            v["dl_status"] = _dl_status(data, v, primary, has_key)
+        _annotate_versions({"modelVersions": versions}, _civitai_has_key())
         return web.json_response({"items": versions})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -862,6 +889,11 @@ def _download_candidates(download_url, model_version_id, file_meta, domain):
 
 def _civitai_download_error(e):
     """Explain Civitai's refusals instead of showing a bare HTTP code."""
+    # Civitai's own wording ("This asset is in Early Access. You can use
+    # Buzz access it now!") beats anything we could write, and is already a
+    # complete sentence — do not wrap it in "Download failed:".
+    if getattr(e, "civitai_refusal", False):
+        return str(e)
     code = getattr(e, "code", 0)
     if code in (401, 403):
         return ("Civitai refused this download (HTTP %d) — the creator requires you to be "
@@ -951,12 +983,25 @@ async def start_download(request):
                 model_type = "loras"
 
         # Which file is being asked for, so the download can fall back to the
-        # ?type=&format= form of the URL if the plain one refuses.
+        # ?type=&format= form of the URL if the plain one refuses. Matched on
+        # the URL first: a naming template renames the file, so by then the
+        # name the client sends is not the name Civitai published.
         file_meta = None
-        for f in (vi or {}).get("files") or []:
-            if isinstance(f, dict) and (f.get("name") or "") == filename:
+        files_known = [f for f in (vi or {}).get("files") or []
+                       if isinstance(f, dict)]
+        picked = (download_url or "").split("?")[0]
+        for f in files_known:
+            furl = (f.get("downloadUrl") or "").split("?")[0]
+            if picked and furl and furl == picked:
                 file_meta = f
                 break
+        if file_meta is None:
+            for f in files_known:
+                if (f.get("name") or "") == filename:
+                    file_meta = f
+                    break
+        if file_meta is None and len(files_known) == 1:
+            file_meta = files_known[0]
 
         # The destination folder, subfolder and filename are all chosen in
         # the download modal, so they are built into a path through one
@@ -1059,7 +1104,9 @@ async def start_download(request):
                     # 401 and 403 are Civitai refusing the *model*, not this
                     # address — no other URL will change the answer.
                     if e.code in (401, 403):
-                        raise RuntimeError(refusal)
+                        err = RuntimeError(refusal)
+                        err.civitai_refusal = True
+                        raise err
                     logger.debug("download strategy %r failed: HTTP %s", label, e.code)
                     last_error = "%s (HTTP %s): %s" % (label, e.code, refusal)
                     continue

@@ -1017,7 +1017,7 @@ function renderBrowse(pane) {
     var nm = savedSel.value;
     if (!nm) return;
     var found = (S.settings.savedSearches || []).filter(function(s2) { return s2.name === nm; })[0];
-    delSavedBtn.title = "Delete \\u201C" + nm + "\\u201D";
+    delSavedBtn.title = "Delete \u201C" + nm + "\u201D";
     if (found) _applySearchDef(found.def || found);
   };
   delSavedBtn.onclick = function() {
@@ -2601,19 +2601,14 @@ function _dlLight(level) {
 }
 
 /** A small coloured dot; hover (or tap) for the reason. */
-function _dlDot(m, opts) {
-  opts = opts || {};
+function _dlDot(m) {
   var st = (m && m.dl_status) || null;
   var level = (st && st.level) || "green";
   var light = _dlLight(level);
   var reason = (st && st.reason) || "";
-  var dot = el("span", { class: "cvt-dl-dot", title: reason || light.label,
-    style: { background: light.color, boxShadow: "0 0 0 2px rgba(0,0,0,.35), 0 0 6px " + light.color } });
-  if (opts.withLabel && reason) {
-    return el("span", { class: "cvt-dl-line", title: reason },
-      dot, el("span", { style: { color: light.color } }, reason));
-  }
-  return dot;
+  return el("span", { class: "cvt-dl-dot", title: reason || light.label,
+    style: { background: light.color,
+             boxShadow: "0 0 0 2px rgba(0,0,0,.35), 0 0 6px " + light.color } });
 }
 
 /* ── Naming templates ──────────────────────────────────────────────────
@@ -2743,6 +2738,11 @@ function _noteFinishedJobs(jobs, quiet) {
     if (!quiet && j.status === "completed") _dlPendingRefresh = true;
   });
   if (!landed) return;
+  // The set only guards against announcing the same job twice, so letting
+  // go of the oldest is free — the worst case is one extra refresh.
+  if (Object.keys(_dlSeenDone).length > 500) {
+    _dlSeenDone = {};
+  }
   // Several jobs often land within a second of each other, so do this once
   // for the batch rather than once per file.
   if (_dlRefreshTimer) clearTimeout(_dlRefreshTimer);
@@ -3114,7 +3114,10 @@ function _jobRow(j) {
     : el("span", { class: "cvt-badge", style: { background:"#5a2a2a" } }, "Civitai");
 
   var statusDot = el("span", { class: "cvt-status-dot " + (j.status || "") });
-  var nameEl = el("div", { class: "name" },
+  // Which address worked is worth knowing when one of them had to be
+  // fallen back to — and where it landed, when it finished.
+  var nameEl = el("div", { class: "name",
+    title: j.strategy ? "Fetched via " + j.strategy : (j.path || "") },
     statusDot,
     " ", srcBadge, " ",
     j.filename || j.name || (j.source === "hf"
@@ -3209,6 +3212,39 @@ function _jobRow(j) {
     row.appendChild(pathEl);
   }
 
+  // Resume and verification are the two things a progress bar cannot say.
+  // Both were decided on the server and then thrown away here, so a 12 GB
+  // checkpoint that picked up where it left off looked like it started over,
+  // and a truncated file looked fine until history said otherwise.
+  var noteEl = el("div", { class: "sub cvt-job-note", style: { marginTop: "3px" } });
+  row.appendChild(noteEl);
+  function _drawNote(nj) {
+    noteEl.innerHTML = "";
+    noteEl.style.display = "none";
+    if (nj.resumed_from) {
+      noteEl.style.display = "";
+      noteEl.appendChild(el("span", { class: "cvt-job-resumed",
+        title: "The download was interrupted and continued from here instead "
+             + "of starting again." },
+        "\u21BB resumed from " + _fmtBytes(nj.resumed_from)));
+    }
+    if (nj.verified === "mismatch") {
+      noteEl.style.display = "";
+      noteEl.appendChild(el("span", { class: "cvt-job-warn",
+        title: "The file does not match the SHA256 Civitai published for it. "
+             + "It is probably truncated \u2014 download it again."
+             + (nj.hash_expected ? "\n\nexpected " + nj.hash_expected
+                                   + (nj.hash ? "\ngot      " + nj.hash : "") : "") },
+        "\u26A0 hash mismatch \u2014 the file may be truncated"));
+    } else if (nj.verified === "ok" && nj.hash) {
+      noteEl.style.display = "";
+      noteEl.appendChild(el("span", { class: "cvt-job-ok",
+        title: "Matches the SHA256 Civitai published: " + nj.hash },
+        "\u2713 hash verified"));
+    }
+  }
+  _drawNote(j);
+
   function update(nj) {
     var npct = nj.progress != null ? Math.round(nj.progress) : 0;
     var status = nj.status || "";
@@ -3231,6 +3267,8 @@ function _jobRow(j) {
       if (cancelBtn.parentNode) cancelBtn.remove();
       cancelBtn = null;
     }
+
+    _drawNote(nj);
 
     var failed = _jobFailed(status);
     if (failed && !retryBtn) {
