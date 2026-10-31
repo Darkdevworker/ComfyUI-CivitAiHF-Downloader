@@ -145,12 +145,20 @@ eq(safe_name("model:v2*"), "modelv2", "characters illegal on Windows are removed
 print("the Civitai download route builds its path through the helper")
 civ = SRC[SRC.index('@routes.post("/civitai/download")'):SRC.index("async def _save_metadata_and_preview(")]
 check(civ, "_safe_download_path(model_type, subfolder, filename)", "one containment check")
-check(civ, 'return web.json_response({"error": save_path}, status=400)', "and a 400 when it fails")
+check(civ, "status=400)", "and a 400 when it fails")
+check(civ, '"error": "That destination is not allowed', "saying which part was refused")
+check(civ, "(folder %r, subfolder %r, file %r)", "and naming all three of them")
 reject(civ, "os.path.join(models_dir, type_dir, subfolder)", "the bare join is gone")
 reject(civ, "os.path.join(save_dir, filename)", "so is the unchecked filename join")
 check(civ, "real_name = _safe_name(real_name)", "Content-Disposition is sanitised")
 check(civ, "_safe_download_path(\n                                model_type, subfolder, real_name)",
       "and the remote filename is re-checked")
+
+print("an empty filename cannot turn the subfolder into the destination")
+check(civ, '(data.get("filename") or "").strip() or "model.safetensors"',
+      "a blank name falls back instead of being skipped")
+reject(civ, 'filename = data.get("filename") or "model.safetensors"',
+       "the un-stripped fallback is gone")
 
 print("but a name the client built itself is not renamed")
 check(civ, 'bool(data.get("name_template"))', "the flag is read off the request body")

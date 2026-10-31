@@ -117,10 +117,29 @@ function _api(path, opts) {
   }
   var p = api.fetchApi(path, opts || {}).then(function(r) {
     if (!r.ok) {
-      var err = new Error("HTTP " + r.status);
-      err.status = r.status;
-      err.transient = [408, 425, 429, 500, 502, 503, 504].indexOf(r.status) >= 0;
-      throw err;
+      // Read the body before judging the response. Our own routes explain
+      // themselves in a JSON `error` field — "A folder already exists called X",
+      // "Nothing to download" — and flattening all of that to "HTTP 400" left
+      // the user with nothing to act on and nothing to report.
+      return r.text().then(function(text) {
+        var msg = "HTTP " + r.status;
+        try {
+          var parsed = JSON.parse(text);
+          if (parsed && parsed.error) msg = String(parsed.error);
+        } catch (e) {
+          // Plain-text responses (a proxy, or web.Response) are still worth
+          // showing when they are short enough to read in a toast.
+          if (text && text.length && text.length < 300) msg = text;
+        }
+        if (typeof console !== "undefined" && console.warn) {
+          console.warn("[civitai] " + method + " " + path +
+                       " \u2192 " + r.status + ": " + msg);
+        }
+        var err = new Error(msg);
+        err.status = r.status;
+        err.transient = [408, 425, 429, 500, 502, 503, 504].indexOf(r.status) >= 0;
+        throw err;
+      });
     }
     return r.json().catch(function() { return {}; });
   }).then(function(json) {
@@ -956,7 +975,7 @@ function renderBrowse(pane) {
   function _applySearchDef(d) {
     qIn.value = d.query || "";
     typeSel.value = d.type || "";
-    sortSel.value = d.sort || "models_v5";
+    sortSel.value = d.sort || "Highest Rated";
     periodSel.value = d.period || "AllTime";
     userIn.value = d.creator || "";
     if (baseCtl._setVal) baseCtl._setVal(d.base_models || []);

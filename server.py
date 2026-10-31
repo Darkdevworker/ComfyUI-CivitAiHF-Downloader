@@ -720,7 +720,10 @@ async def start_download(request):
         download_url = data.get("url")
         model_version_id = data.get("model_version_id")
         model_type = data.get("save_as") or data.get("type", "")
-        filename = data.get("filename") or "model.safetensors"
+        # Strip, not just truthiness: a name of "   " would be skipped by
+        # _safe_download_path, leaving the subfolder itself as the target —
+        # which then collides with the folder the previous download made.
+        filename = (data.get("filename") or "").strip() or "model.safetensors"
         subfolder = data.get("subfolder", "")
         overwrite = data.get("overwrite", False)
         save_metadata = data.get("save_metadata", False)
@@ -782,12 +785,23 @@ async def start_download(request):
         # containment check rather than a bare join.
         ok, save_path = _safe_download_path(model_type, subfolder, filename)
         if not ok:
-            return web.json_response({"error": save_path}, status=400)
+            # Name every part: with only the resolved path the user cannot
+            # tell which of the three boxes in the modal is at fault.
+            return web.json_response(
+                {"error": "That destination is not allowed \u2014 %s "
+                          "(folder %r, subfolder %r, file %r). Remove any "
+                          "\"..\", leading / or drive letter and try again."
+                          % (save_path, model_type, subfolder, filename)},
+                status=400)
         save_dir = os.path.dirname(save_path)
         os.makedirs(save_dir, exist_ok=True)
         if os.path.isdir(save_path):
+            # Almost always a name collision: something was already saved
+            # here as a folder, so this file cannot take the same name.
             return web.json_response(
-                {"error": "A folder already exists called " + os.path.basename(save_path)},
+                {"error": "A folder already exists called " + os.path.basename(save_path)
+                          + " \u2014 give the file a different name, or use a "
+                            "different subfolder."},
                 status=400)
 
         # For metadata-only jobs, just fetch & save metadata then return
