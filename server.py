@@ -931,6 +931,16 @@ async def start_download(request):
 
         domain = utils._get_active_domain()
 
+        # The version id is the difference between one address for a file and
+        # three. It is not always sent — a retry or a re-download from history
+        # may carry only the URL — but it is always in the URL Civitai hands
+        # out (/api/download/models/<id>), so recover it rather than letting
+        # the download hang on a single address.
+        if not model_version_id and download_url:
+            mvid = re.search(r"/api/download/models/(\d+)", str(download_url))
+            if mvid:
+                model_version_id = int(mvid.group(1))
+
         if model_version_id and str(model_version_id).strip() and not download_url:
             # Try fetching version info to get actual download URL from Civitai
             try:
@@ -1091,50 +1101,86 @@ async def start_download(request):
                 download_url, model_version_id, file_meta, domain)
             resp = None
             used = ""
-            last_error = None
-            for label, url in candidates:
+            failures = []
+            # How much of the file to ask the next address to skip. Separate
+            # from resume_from: it is abandoned the moment it is shown to be
+            # wrong, and resume_from only takes the value that produced the
+            # response we actually stream.
+            skip = resume_from
+
+            def _abandon_resume(url_tried, label, why):
+                """Forget the partial file and ask the same address from zero."""
+                nonlocal skip, part
+                skip = 0
+                part = None
+                _remove_part(part_path)
+                logger.debug("%s for %s, starting over", why, url_tried)
                 try:
-                    opened = _open(url, req_headers)
+                    return _open(url_tried, dict(req_headers)), None
+                except Exception as e:
+                    return None, "%s (%s, retried from zero): %s" % (label, why, e)
+
+            for label, url in candidates:
+                # A fresh header set per address. The Range belongs to the
+                # bytes already on disk, not to the loop, so it must never
+                # follow the request to a different URL.
+                headers = dict(req_headers)
+                if skip:
+                    headers["Range"] = "bytes=%d-" % skip
+
+                opened = None
+                try:
+                    opened = _open(url, headers)
                 except urllib.error.HTTPError as e:
                     try:
                         body = e.read()
                     except Exception:
                         body = b""
-                    refusal = _civitai_refusal(e.code, body)
                     # 401 and 403 are Civitai refusing the *model*, not this
                     # address — no other URL will change the answer.
                     if e.code in (401, 403):
-                        err = RuntimeError(refusal)
+                        err = RuntimeError(_civitai_refusal(e.code, body))
                         err.civitai_refusal = True
                         raise err
                     logger.debug("download strategy %r failed: HTTP %s", label, e.code)
-                    last_error = "%s (HTTP %s): %s" % (label, e.code, refusal)
-                    continue
+                    if e.code in (400, 416) and skip:
+                        # 416 is "range not satisfiable": the bytes on disk
+                        # are not a prefix of this file, so the marker is
+                        # stale. 400 is how Civitai (via Cloudflare) answers a
+                        # Range it will not parse — the body is XML, not its
+                        # usual JSON, which is why the row said only "Civitai
+                        # returned HTTP 400". Either way the Range is the
+                        # problem and not the address, so drop it and ask
+                        # again from zero: otherwise one stale marker makes a
+                        # model permanently undownloadable.
+                        opened, failure = _abandon_resume(url, label, "stale resume")
+                    else:
+                        failure = "%s (HTTP %s): %s" % (
+                            label, e.code, _civitai_refusal(e.code, body))
+                    if opened is None:
+                        failures.append(failure)
+                        continue
                 except Exception as e:
                     logger.debug("download strategy %r failed", label, exc_info=True)
-                    last_error = "%s: %s" % (label, e)
+                    failures.append("%s: %s" % (label, e))
                     continue
 
-                if "text/html" in (opened.headers.get("Content-Type") or "").lower():
+                if ("text/html" in (opened.headers.get("Content-Type") or "").lower()):
                     opened.close()
-                    last_error = ("%s: Civitai returned a login page instead of the "
-                                  "model — set a Civitai API key in Settings" % label)
+                    failures.append(
+                        "%s: Civitai returned a login page instead of the "
+                        "model \u2014 set a Civitai API key in Settings" % label)
                     continue
 
-                if resume_from and opened.status != 206:
+                if skip and opened.status != 206:
                     # The server did not honour Range, so what is on disk is
                     # not a prefix of this response — start over rather than
                     # splice two different files together.
                     opened.close()
-                    logger.debug("resume refused for %s (HTTP %s), starting over",
-                                 save_path, opened.status)
-                    resume_from = 0
-                    part = None
-                    req_headers.pop("Range", None)
-                    try:
-                        opened = _open(url, req_headers)
-                    except Exception as e:
-                        last_error = "%s: %s" % (label, e)
+                    opened, failure = _abandon_resume(
+                        url, label, "resume refused (HTTP %s)" % opened.status)
+                    if opened is None:
+                        failures.append(failure)
                         continue
 
                 resp = opened
@@ -1142,8 +1188,15 @@ async def start_download(request):
                 break
 
             if resp is None:
+                # Every address is named: with only the last failure on show
+                # there is no way to tell one bad URL from a model that is
+                # genuinely not downloadable.
                 raise RuntimeError(
-                    last_error or "Civitai did not return a download for this model.")
+                    "; ".join(failures)
+                    or "Civitai did not return a download for this model.")
+            # Only now is the resume real: `skip` is what this response
+            # actually starts from.
+            resume_from = skip
             if task_id in DOWNLOAD_TASKS:
                 DOWNLOAD_TASKS[task_id]["strategy"] = used
 
@@ -1473,6 +1526,15 @@ def _resume_point(save_path, part, url):
     if 0 < have < want:
         return have
     return 0
+
+
+def _remove_part(path):
+    """Forget a resume marker that turned out to describe a different file."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        logger.debug("could not remove the resume marker at %s", path, exc_info=True)
 
 
 def _write_part(path, data):

@@ -231,12 +231,13 @@ dl = SRC[SRC.index('@routes.post("/civitai/download")'):SRC.index("async def _sa
 check(dl, "_download_candidates(", "the download builds a list of addresses")
 check(dl, "for label, url in candidates:", "and tries each one in turn")
 check(dl, "if e.code in (401, 403):", "a refusal of the model stops the search")
-ok("err = RuntimeError(refusal)" in dl and "err.civitai_refusal = True" in dl,
+ok("err = RuntimeError(_civitai_refusal(e.code, body))" in dl
+   and "err.civitai_refusal = True" in dl,
    "with Civitai's own explanation, marked so it is not re-worded")
 check(SRC, "if getattr(e, \"civitai_refusal\", False):\n        return str(e)",
       "which _civitai_download_error passes through untouched")
 check(dl, 'DOWNLOAD_TASKS[task_id]["strategy"] = used', "the one that worked is recorded")
-check(dl, "raise RuntimeError(\n                    last_error or", "and failure reports the last attempt")
+check(dl, '; ".join(failures)', "and every failed address is reported, not only the last")
 check(dl, "finally:", "the response is always closed")
 
 search = SRC[SRC.index("# ── Civitai Search / Browse"):SRC.index('@routes.get("/civitai/lookup")')]
