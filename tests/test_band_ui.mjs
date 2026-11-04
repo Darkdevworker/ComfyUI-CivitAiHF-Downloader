@@ -14,7 +14,7 @@ function makeEl(tag) {
   const classes = new Set();
   const node = {
     tagName: (tag || "").toUpperCase(),
-    children: [], style: {}, dataset: {}, title: "", textContent: "", className: "",
+    children: [], style: {}, dataset: {}, title: "", textContent: "",
     classList: {
       add: (c) => classes.add(c),
       remove: (c) => classes.delete(c),
@@ -22,6 +22,13 @@ function makeEl(tag) {
       contains: (c) => classes.has(c),
     },
     _classes: classes,
+    // keep className and classList in step the way a real element does, so
+    // code that sets one and tests that read the other both work
+    get className() { return [...classes].join(" "); },
+    set className(v) {
+      classes.clear();
+      String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+    },
     appendChild(c) { this.children.push(c); return c; },
   };
   registry.push(node);
@@ -47,6 +54,14 @@ function eq(actual, expected, label) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (ok) pass++;
   else { fail++; console.log(`  ✗ ${label}\n      expected ${JSON.stringify(expected)}\n      actual   ${JSON.stringify(actual)}`); }
+}
+function ok(cond, label) {
+  if (cond) pass++;
+  else { fail++; console.log(`  ✗ ${label}`); }
+}
+function has(text, re, label) {
+  if (re.test(text)) pass++;
+  else { fail++; console.log(`  ✗ ${label} — not found: ${re}`); }
 }
 
 console.log("badges");
@@ -144,6 +159,59 @@ eq(pgCard.classList.contains("cvt-blur"), false, "PG stays visible at threshold 
 console.log("ticking a band never searches on its own");
 // static: the browse panel lives in civitai.js, which imports ComfyUI modules
 const panel = fs.readFileSync(path.join(here, "..", "js", "civitai.js"), "utf8");
+const css = fs.readFileSync(path.join(here, "..", "js", "civitai.css"), "utf8");
+
+/* ── the painted band boxes ────────────────────────────────────────────
+ * Each band is an outlined square in its own colour with a white tick when
+ * on, replacing the native checkbox + swatch. The real checkbox has to
+ * survive (keyboard, screen readers) even though it is hidden. */
+console.log("painted band boxes");
+const BAND_PALETTE = [
+  ["PG", "#2e7d32"], ["PG-13", "#b26a00"], ["R", "#c62828"],
+  ["X", "#6a1b9a"], ["XXX", "#111111"],
+];
+const INVISIBLE_LUMA = 0.15;   // bands below this are invisible as an outline
+const TARGET_LUMA = 0.32;      // ...and get lifted to here
+function luma(hex) {
+  const n = parseInt(String(hex).replace("#", ""), 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+}
+eq(row.children.length, 6, "row still holds five bands plus All");
+
+for (let i = 0; i < BAND_PALETTE.length; i++) {
+  const [id, colour] = BAND_PALETTE[i];
+  const lbl = row.children[i];
+  eq(lbl.children.length, 3, `${id}: label holds checkbox, box and text`);
+  const [cb, box, text] = lbl.children;
+  eq(cb.type, "checkbox", `${id}: a real checkbox survives for keyboard + a11y`);
+  eq(cb.value, id, `${id}: checkbox carries the band id`);
+  eq(box._classes.has("cvt-band-box"), true, `${id}: box is tagged for CSS`);
+  eq(box.children.length, 1, `${id}: box holds exactly the tick`);
+  eq(box.children[0]._classes.has("cvt-band-tick"), true, `${id}: tick is tagged for CSS`);
+  eq(text.textContent, id, `${id}: the band id is still readable text`);
+  has(box.children[0].innerHTML, /<svg[\s\S]*<path/, `${id}: tick is real inline SVG`);
+  // The painted colour has to be visible on a near-black panel. XXX is
+  // #111111, right for a filled badge but invisible as an outline, so it is
+  // the one band that gets lifted. Everything else is legible as drawn and
+  // must keep its exact palette colour.
+  if (luma(colour) >= INVISIBLE_LUMA) {
+    eq(box.style.borderColor, colour, `${id}: keeps its palette colour unchanged`);
+  } else {
+    ok(luma(box.style.borderColor) >= TARGET_LUMA - 1e-9,
+       `${id}: lifted from ${colour} to ${box.style.borderColor}, clearing the target`);
+  }
+  eq(box.style.background, box.style.borderColor + "4D", `${id}: fill is 30% of the chip colour`);
+}
+ok(luma(row.children[4].children[1].style.borderColor) > luma("#111111"),
+   "XXX is lifted out of the near-black range rather than painted #111111");
+
+// CSS has to do its half: hide the native box, show the tick when checked
+has(css, /\.cvt-band > \.cvt-band-cb:checked \+ \.cvt-band-box > \.cvt-band-tick/,
+  "CSS reveals the tick when the box is checked");
+has(css, /\.cvt-band > \.cvt-band-cb \{[^}]*opacity: 0/,
+  "CSS hides the native checkbox visually (but keeps it focusable)");
+has(css, /\.cvt-band > \.cvt-band-cb:focus-visible \+ \.cvt-band-box/,
+  "CSS shows a focus ring on the painted box");
 // Just the band row. It runs up to the chip row, which legitimately does
 // call _resetAndSearch — removing a chip is meant to re-run the search,
 // unlike ticking a band.

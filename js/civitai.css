@@ -1445,9 +1445,61 @@ img.nsfw:hover { filter: none; }
   text-shadow: 0 1px 1px rgba(0,0,0,.35);
 }
 
-/* Filter row in the search bar */
+/* ── Band filter row ──────────────────────────────────────────────
+ * Each band is a 12px outlined square in its own colour with a white tick
+ * when on. The native checkbox stays in the accessibility tree and keeps
+ * keyboard focus — it is only hidden visually, so tabbing and screen readers
+ * still work while the painted box is what you actually see. */
 .cvt-band-filter { user-select: none; }
-.cvt-band-all { flex: 0 0 auto; }
+
+.cvt-band {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 4px;
+  flex: 0 0 auto; cursor: pointer;
+  font-size: 11px; white-space: nowrap;
+  color: var(--civ-text-dim);
+}
+.cvt-band:hover { color: var(--civ-text); }
+
+/* visually hidden, still focusable */
+.cvt-band > .cvt-band-cb {
+  position: absolute; width: 1px; height: 1px;
+  opacity: 0; margin: 0; pointer-events: none;
+}
+
+.cvt-band-box {
+  position: relative;
+  width: 12px; height: 12px; border-radius: 3px;
+  border: 1px solid currentColor;
+  box-sizing: border-box; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  /* a hairline ring so even a near-black band keeps a visible edge */
+  box-shadow: 0 0 0 1px rgba(255,255,255,.14);
+  transition: background .15s var(--civ-ease-out), border-color .15s var(--civ-ease-out);
+}
+.cvt-band-tick {
+  display: block; width: 8px; height: 7px;
+  opacity: 0; transform: scale(.6);
+  transition: opacity .15s var(--civ-ease-out), transform .18s var(--civ-spring);
+}
+.cvt-band > .cvt-band-cb:checked + .cvt-band-box > .cvt-band-tick {
+  opacity: 1; transform: scale(1);
+}
+.cvt-band > .cvt-band-cb:focus-visible + .cvt-band-box {
+  outline: 2px solid var(--civ-accent); outline-offset: 2px;
+}
+
+/* All / Clear — wider pill, same geometry */
+.cvt-band-all {
+  flex: 0 0 auto;
+  font: 500 10px var(--civ-font);
+  padding: 2px 8px; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,.55);
+  background: rgba(255,255,255,.30);
+  color: var(--civ-text); cursor: pointer;
+  transition: background .15s var(--civ-ease-out), border-color .15s var(--civ-ease-out);
+}
+.cvt-band-all:hover { background: rgba(255,255,255,.42); border-color: #fff; }
 
 /* Clickable creator name — one click filters the search to that user */
 .cvt-creator {
@@ -1457,8 +1509,8 @@ img.nsfw:hover { filter: none; }
   transition: color .2s var(--civ-ease-out);
 }
 .cvt-creator:hover { color: var(--civ-text, #f0f0f0); text-decoration-style: solid; }
-.cvt-band-filter input[type="checkbox"] { margin: 0; accent-color: #7c5cff; cursor: pointer; }
-.cvt-band-filter label:hover { color: var(--civ-text, #ddd); }
+/* (superseded by .cvt-band / .cvt-band-box above — the checkbox is now
+   visually hidden and the box is painted, so accent-color no longer applies) */
 
 /* Legend shown under the blur setting */
 .cvt-band-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }

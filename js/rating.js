@@ -386,6 +386,58 @@ export function makeBandBadge(bandId, opts) {
  * Five checkboxes, one per band, coloured with the official band colours.
  * Returns a row element exposing `_getVal()` → "PG,X" (empty string = no filter).
  */
+/* The painted band box: band colour at 30% behind a solid band-coloured
+   border. Appended to the six-digit hex so the tint tracks the band. */
+var TINT_ALPHA = "4D";      // 0x4D/0xFF ≈ 30%
+var INVISIBLE_LUMA = 0.15;  // below this an outline cannot be seen at all
+var TARGET_LUMA = 0.32;     // ...so a colour that dark is lifted to here
+
+/**
+ * Lift a band colour that would otherwise be invisible as an outline.
+ *
+ * XXX is #111111 in the band palette — right for a filled badge, but as a
+ * border on a near-black panel it vanishes. The mockup solved this by giving
+ * that one chip a rainbow stroke; this lifts the colour toward white instead.
+ *
+ * Two thresholds on purpose: a single floor set high enough to rescue XXX
+ * would also repaint X and R, which are perfectly legible as drawn. So only
+ * colours below INVISIBLE_LUMA are touched, and they go up to TARGET_LUMA.
+ * The palette itself is never modified.
+ */
+function _visibleChipColor(hex) {
+  var m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return hex;
+  var n = parseInt(m[1], 16);
+  var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  var luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  if (luma >= INVISIBLE_LUMA) return hex;
+  var t = (TARGET_LUMA - luma) / Math.max(1 - luma, 0.001);
+  // ceil, not round: rounding down can leave the result a hair under target
+  return "#" + [r, g, b].map(function (v) {
+    var lifted = Math.ceil(v + (255 - v) * t);
+    return ("0" + Math.max(0, Math.min(255, lifted)).toString(16)).slice(-2);
+  }).join("");
+}
+
+/**
+ * The white tick drawn inside a checked band box.
+ *
+ * Inlined rather than pulled from js/logo.js so rating.js stays
+ * dependency-free — it is imported on its own by the band tests.
+ */
+function makeTick() {
+  var t = document.createElement("i");
+  t.className = "cvt-band-tick";
+  t.innerHTML =
+    '<svg viewBox="0 0 7.667 6.333" width="8" height="7" fill="none" aria-hidden="true">' +
+    '<path d="M7.5 0.127C7.706 0.311 7.724 0.627 7.54 0.833L2.778 6.166' +
+    'C2.683 6.273 2.547 6.333 2.405 6.333C2.262 6.333 2.127 6.273 2.032 6.166' +
+    'L0.127 4.033C-0.057 3.827 -0.039 3.511 0.167 3.327C0.373 3.143 0.689 3.161 0.873 3.367' +
+    'L2.405 5.083L6.794 0.167C6.978 -0.039 7.294 -0.057 7.5 0.127Z" ' +
+    'fill="#FFFFFF" fill-rule="evenodd"/></svg>';
+  return t;
+}
+
 export function buildBandCheckboxes(selectedStr, onChange) {
   var selected = parseBandSelection(selectedStr);
   var boxes = {};
@@ -406,17 +458,26 @@ export function buildBandCheckboxes(selectedStr, onChange) {
     var cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = band.id;
+    cb.className = "cvt-band-cb";
     cb.checked = selected.indexOf(band.id) >= 0;
     cb.onchange = function () { _syncAll(); if (typeof onChange === "function") onChange(); };
 
-    var swatch = document.createElement("i");
-    swatch.style.cssText = "display:inline-block;width:6px;height:6px;border-radius:2px;flex:0 0 auto;background:" + band.color + ";";
+    // The painted box replaces the native control: 12px rounded square, band
+    // colour at 30% fill with a solid band-coloured border, white tick when
+    // on. The real checkbox stays in the accessibility tree and keeps focus —
+    // it is only hidden visually, so keyboard and screen readers still work.
+    var chip = _visibleChipColor(band.color);
+    var box = document.createElement("span");
+    box.className = "cvt-band-box";
+    box.style.borderColor = chip;
+    box.style.background = chip + TINT_ALPHA;
+    box.appendChild(makeTick());
 
     var lbl = document.createElement("label");
-    lbl.style.cssText = "display:inline-flex;align-items:center;gap:2px;flex:0 0 auto;cursor:pointer;font-size:11px;white-space:nowrap;color:var(--civ-text-dim);";
+    lbl.className = "cvt-band";
     lbl.title = band.id + " — " + band.label + "\n" + band.blurb;
     lbl.appendChild(cb);
-    lbl.appendChild(swatch);
+    lbl.appendChild(box);
     lbl.appendChild(document.createTextNode(band.id));
     row.appendChild(lbl);
     boxes[band.id] = cb;
