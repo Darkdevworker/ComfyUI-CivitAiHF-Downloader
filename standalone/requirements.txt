@@ -1,0 +1,14 @@
+# Required by the extension's backend when run without ComfyUI.
+#   python -m pip install -r standalone/requirements.txt
+#
+# If you run this with ComfyUI's own bundled Python you already have all of
+# these and can skip this file.
+
+aiohttp          # the web server run.py mounts the extension's routes on
+requests         # outbound calls to the Civitai and Hugging Face APIs
+tqdm             # download progress bars
+markdown-it-py   # rendering model descriptions in the details view
+
+# Optional — image previews and NSFW blurring. Imported lazily, so the server
+# starts without it and prints a warning; uncomment to get those features.
+# Pillow

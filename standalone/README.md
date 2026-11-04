@@ -4,6 +4,43 @@ The downloader panel is a ComfyUI *sidebar extension*, but it barely touches
 ComfyUI. That makes it cheap to run on its own — useful for working on the UI,
 testing a download, or browsing without starting a full ComfyUI instance.
 
+## Install the dependencies
+
+The extension needs four packages. Install them once:
+
+```bash
+python -m pip install aiohttp requests tqdm markdown-it-py
+```
+
+| Package | For |
+|---|---|
+| `aiohttp` | the web server `run.py` mounts the extension's routes on |
+| `requests` | outbound calls to the Civitai and Hugging Face APIs |
+| `tqdm` | download progress bars |
+| `markdown-it-py` | rendering model descriptions in the details view |
+
+One more is optional:
+
+```bash
+python -m pip install Pillow
+```
+
+`Pillow` backs image previews and NSFW blurring. It is imported lazily inside
+a function, so the server starts fine without it and warns instead — but those
+two features will not work.
+
+If you already have ComfyUI installed, its bundled Python already has all of
+these. You can skip installing anything and just run with it from the
+repository root:
+
+```powershell
+<ComfyUI>\python_embeded\python.exe standalone\run.py
+```
+
+`run.py` checks for the required packages before doing anything else and lists
+every missing one in a single message with the exact command to install them,
+so you do not have to re-run once per package.
+
 ## Run it
 
 ```bash

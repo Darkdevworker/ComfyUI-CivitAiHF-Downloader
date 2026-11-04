@@ -49,6 +49,61 @@ SHIM = os.path.join(HERE, "shim")
 WEB = os.path.join(HERE, "web")
 
 
+# Imported at load time; without these the server cannot start at all.
+REQUIRED = {
+    "aiohttp": "the web server this script mounts the extension's routes on",
+    "requests": "outbound calls to the Civitai and Hugging Face APIs",
+    "tqdm": "download progress bars",
+    "markdown_it": "rendering model descriptions in the details view",
+}
+
+# Imported lazily inside a function. The server still starts without it, but
+# the feature it backs is unavailable.
+OPTIONAL = {
+    "PIL": "image previews and NSFW blurring (server.py imports it inside a function)",
+}
+
+
+def check_dependencies():
+    """
+    Report every missing package at once.
+
+    Without this, a bare Python install dies on `from aiohttp import web`
+    and you have to re-run once per package to discover the next one.
+    """
+    import importlib.util
+
+    missing = [name for name in REQUIRED
+               if importlib.util.find_spec(name) is None]
+    if not missing:
+        return
+
+    print("[standalone] missing required packages:")
+    for name in missing:
+        print("    %-12s %s" % (name, REQUIRED[name]))
+    print()
+    print("[standalone] install them with:")
+    print("    %s -m pip install %s" % (sys.executable, " ".join(missing)))
+    print()
+    print("[standalone] If you have ComfyUI installed, you can instead run this")
+    print("    with ComfyUI's own Python, which already has all of them:")
+    print("    <ComfyUI>\\python_embeded\\python.exe standalone\\run.py")
+    sys.exit(1)
+
+
+def warn_optional_dependencies():
+    import importlib.util
+
+    missing = [name for name in OPTIONAL
+               if importlib.util.find_spec(name) is None]
+    for name in missing:
+        print("[standalone] note: %s is not installed — %s"
+              % (name, OPTIONAL[name]))
+    if missing:
+        print("[standalone]      install with: %s -m pip install %s"
+              % (sys.executable, " ".join(missing)))
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Run the Civitai/HF Downloader UI without ComfyUI.")
@@ -165,6 +220,8 @@ async def main_async(args):
 
 def main():
     args = parse_args()
+    check_dependencies()
+    warn_optional_dependencies()
     try:
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
