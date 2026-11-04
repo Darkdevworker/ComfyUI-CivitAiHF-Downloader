@@ -120,6 +120,28 @@
   transform: translateX(-50%) scaleX(1);
 }
 
+/* ── Vector icons (js/logo.js ICONS) ─────────────────────────────
+ * Every mark is drawn with currentColor, so it takes the colour of the
+ * control it sits in — dim on an idle tab, white on the active one —
+ * with no second copy of the artwork per state. */
+.cvt-icon { display: block; flex-shrink: 0; }
+.cvt-tab .tab-emoji { display: inline-flex; align-items: center; justify-content: center; }
+.cvt-tab .tab-emoji .cvt-icon { width: 15px; height: 15px; }
+
+/* Tab pill: outlined when idle, accent outline + underline when active. */
+.cvt-tab { border-color: rgba(255,255,255,.14); }
+.cvt-tab.active {
+  border-color: #00B3FF;
+  box-shadow: 0 0 0 1px rgba(0,179,255,.16);
+}
+.cvt-tab.active::after { background: #00B3FF; }
+
+/* Icons inside buttons sit on the baseline with the label. */
+.cvt-btn > .cvt-icon { display: inline-block; vertical-align: -2px; margin-right: 5px; }
+.cvt-theme-toggle .cvt-icon { width: 15px; height: 15px; }
+.cvt-settings-toggle > .cvt-icon { display: inline-block; vertical-align: -2px; margin-right: 6px; }
+.cvt-grid-mark { color: var(--civ-text-dim); }
+
 /* ── Tab panes (main scrollable content area) ────────────────────── */
 .cvt-pane {
   flex: 1; min-height: 0; min-width: 0;

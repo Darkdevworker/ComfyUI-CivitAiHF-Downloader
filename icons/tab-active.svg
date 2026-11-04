@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 32" fill="none">
+  <path transform="matrix(1 0 0 1 1 1)" d="M8 0L62 0C66.418 0 70 3.582 70 8L70 8L70 22C70 26.418 66.418 30 62 30L62 30L8 30C3.582 30 0 26.418 0 22L0 22L0 8C0 3.582 3.582 0 8 0L8 0Z" fill="#303030" fill-opacity="0.2"/>
+  <path transform="matrix(1 0 0 1 1 1)" d="M-0.5 8C-0.5 3.306 3.306 -0.5 8 -0.5L62 -0.5C66.694 -0.5 70.5 3.306 70.5 8L70.5 22C70.5 26.694 66.694 30.5 62 30.5L8 30.5C3.306 30.5 -0.5 26.694 -0.5 22Z" fill="none" stroke="#00B3FF" stroke-width="1"/>
+</svg>

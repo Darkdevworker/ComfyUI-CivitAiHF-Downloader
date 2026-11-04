@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { installSidebarLogo, makeLogo, TAB_LOGOS } from "./logo.js";
+import { installSidebarLogo, makeLogo, TAB_LOGOS, svgIcon } from "./logo.js";
 import {
   CONTENT_BANDS, BAND_ORDER, parseBandSelection, needsNsfwQuery,
   bandIdOfModel, bandIdOfImage, bandOfModel, filterByBands,
@@ -271,14 +271,15 @@ function _toast(msg, type) {
 
 
 const TABS = [
-  // emojis below are only fallbacks: buildUI() paints the real mark for
-  // any tab listed in TAB_LOGOS (see js/logo.js)
-  ["civitai", "Civitai", "\uD83C\uDDE8", "emoji-float"],
-  ["hf", "HF", "\uD83E\uDD17", "emoji-bounce"],
-  ["downloads", "Downloads", "\u2B07", "emoji-pulse"],
-  ["local", "Local", "\uD83D\uDCC1", "emoji-wiggle"],
-  ["bookmarks", "Bookmarks", "\u2B50", "emoji-wiggle"],
-  ["settings", "Settings", "\u2699\uFE0F", "emoji-spin"],
+  // [id, label, fallbackEmoji, animationClass, iconName]
+  // `iconName` indexes ICONS in js/logo.js. The vector mark wins; the emoji is
+  // only what you see if that name is ever missing from the set.
+  ["civitai", "Civitai", "\uD83C\uDDE8", "emoji-float", "civitai"],
+  ["hf", "HF", "\uD83E\uDD17", "emoji-bounce", "huggingface"],
+  ["downloads", "Downloads", "\u2B07", "emoji-pulse", "download"],
+  ["local", "Local", "\uD83D\uDCC1", "emoji-wiggle", "local"],
+  ["bookmarks", "Bookmarks", "\u2B50", "emoji-wiggle", "bookmark"],
+  ["settings", "Settings", "\u2699\uFE0F", "emoji-spin", "settings"],
 ];
 
 function buildUI() {
@@ -295,16 +296,15 @@ function buildUI() {
   var tabBar = el("div", { class: "cvt-tabs" });
   var panes = {};
   TABS.forEach(function(t) {
-    var id = t[0], label = t[1], icon = t[2], anim = t[3];
-    // Tabs listed in TAB_LOGOS get their real mark instead of an emoji
-    // (Civitai = the "C" logo, Downloads = the green arrow).
-    var emojiSpan;
-    if (TAB_LOGOS[id]) {
-      emojiSpan = makeLogo(14, label, id);
-      emojiSpan.classList.add("tab-emoji");
-    } else {
-      emojiSpan = el("span", { class: "tab-emoji" }, icon);
-    }
+    var id = t[0], label = t[1], icon = t[2], anim = t[3], mark = t[4];
+    // Vector mark first (js/logo.js ICONS), then the legacy per-tab PNG,
+    // and only then the emoji. Every path keeps the same wrapper span so the
+    // animation class and the CSS that pauses it on idle tabs still apply.
+    var emojiSpan = el("span", { class: "tab-emoji" });
+    var markSvg = svgIcon(mark, 15);
+    if (markSvg) emojiSpan.appendChild(markSvg);
+    else if (TAB_LOGOS[id]) emojiSpan.appendChild(makeLogo(14, label, id));
+    else emojiSpan.textContent = icon;
     var btn = el("button", { class: "cvt-tab" + (id === "civitai" ? " active" : ""), dataset: { tab: id } },
       emojiSpan, " ", label);
     // Only the active tab animates (UX guideline: avoid excessive motion)
@@ -325,11 +325,21 @@ function buildUI() {
   };
   renderBrowse(panes.civitai); panes.civitai._rendered = true;
   // Theme toggle button
-  var themeBtn = el("button", { class: "cvt-theme-toggle", title: "Toggle light/dark theme" }, "\u2600\uFE0F");
+  var themeBtn = el("button", { class: "cvt-theme-toggle" });
+  // Show the icon for the theme you would switch *to*: sun while dark, moon
+  // while light. Falls back to the old emoji if the icon set is unavailable.
+  var _paintThemeBtn = function(isLight) {
+    themeBtn.innerHTML = "";
+    var ic = svgIcon(isLight ? "theme-dark" : "theme-light", 15);
+    if (ic) themeBtn.appendChild(ic);
+    else themeBtn.textContent = isLight ? "\uD83C\uDF19" : "\u2600\uFE0F";
+    themeBtn.title = isLight ? "Switch to dark theme" : "Switch to light theme";
+  };
+  _paintThemeBtn(false);
   themeBtn.onclick = function() {
     root.classList.toggle("light");
     var isLight = root.classList.contains("light");
-    themeBtn.textContent = isLight ? "\uD83C\uDF19" : "\u2600\uFE0F";
+    _paintThemeBtn(isLight);
     _api("/civitai/settings", { method:"POST", body:JSON.stringify({ theme: isLight ? "light" : "dark" }) }).catch(function(){});
   };
   root.appendChild(themeBtn);
@@ -846,7 +856,9 @@ function renderBrowse(pane) {
 
   // ---- Manual entry row (lookup by ID / URL / hash) ----
   var lookupIn = el("input", { type: "text", placeholder: "URL / ID / SHA256 / AIR\u2026", style: { flex:"1", fontFamily:"monospace", fontSize:"11px", background:"#1c1410", borderColor:"#5a3a2a" } });
-  var lookupBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" } }, "\uD83C\uDFAF");
+  var lookupBtn = el("button", { class: "cvt-btn", style: { flex:"0 0 auto" }, title: "Look up this URL / ID / hash" });
+  var _lookupIc = svgIcon("direct-search", 14);
+  if (_lookupIc) lookupBtn.appendChild(_lookupIc); else lookupBtn.textContent = "\uD83C\uDFAF";
   var lookupRow = el("div", { class: "cvt-row", style: { marginBottom:"6px" } });
   lookupRow.appendChild(lookupIn); lookupRow.appendChild(lookupBtn);
   sb.appendChild(lookupRow);
@@ -2865,12 +2877,18 @@ function renderDownloads(pane) {
   _dlHeader = el("div", { style: { marginBottom:"10px", paddingBottom:"8px", borderBottom:"1px solid var(--civ-line)", flexShrink:0 } });
 
   var topRow = el("div", { class: "cvt-row" });
-  var refreshBtn = el("button", { class: "cvt-btn ghost" },
-    el("span", { class: "emoji-btn emoji-spin-slow" }, "\u21BB"), " Refresh");
+  var refreshBtn = el("button", { class: "cvt-btn ghost" });
+  var _refreshIc = svgIcon("refresh", 13);
+  if (_refreshIc) { _refreshIc.classList.add("emoji-spin-slow"); refreshBtn.appendChild(_refreshIc); }
+  else refreshBtn.appendChild(el("span", { class: "emoji-btn emoji-spin-slow" }, "\u21BB"));
+  refreshBtn.appendChild(document.createTextNode(" Refresh"));
   refreshBtn.onclick = _pollDl;
 
-  var clearBtn = el("button", { class: "cvt-btn ghost" },
-    el("span", { class: "emoji-btn" }, "\uD83E\uDDF9"), " Clear completed");
+  var clearBtn = el("button", { class: "cvt-btn ghost" });
+  var _clearIc = svgIcon("clear-completed", 13);
+  if (_clearIc) clearBtn.appendChild(_clearIc);
+  else clearBtn.appendChild(el("span", { class: "emoji-btn" }, "\uD83E\uDDF9"));
+  clearBtn.appendChild(document.createTextNode(" Clear completed"));
   clearBtn.onclick = function() {
     clearBtn.disabled = true;
     _api("/civitai/downloads-clear", { method:"POST", body:JSON.stringify({}) }).then(function(r) {
@@ -3553,7 +3571,23 @@ function renderSettings(pane) {
    [cbHash,"\uD83D\uDD10 Verify SHA256 hash after download"],
    [cbNsfwBlur,"\uD83D\uDE48 Blur NSFW images (R / X / XXX) in card grid and previews"],
    [cbCompact,"\uD83D\uDCCA Compact grid mode (smaller cards, more columns)"]].forEach(function(item) {
-    prefsGroup.appendChild(el("label", { class: "cvt-settings-toggle" }, item[0], el("span", {}, item[1])));
+    var kids = [item[0], el("span", {}, item[1])];
+    if (item[0] === cbCompact) {
+      // Show the layout the toggle will apply: two panes when off, three when on.
+      var gridIc = svgIcon("grid-normal", 14);
+      if (gridIc) {
+        gridIc.classList.add("cvt-grid-mark");
+        cbCompact.addEventListener("change", function() {
+          var next = svgIcon(cbCompact.checked ? "grid-compact" : "grid-normal", 14);
+          if (!next || !gridIc.parentNode) return;
+          next.classList.add("cvt-grid-mark");
+          gridIc.parentNode.replaceChild(next, gridIc);
+          gridIc = next;
+        });
+        kids.unshift(gridIc);
+      }
+    }
+    prefsGroup.appendChild(el("label", { class: "cvt-settings-toggle" }, kids));
   });
   // Blur threshold + band legend
   prefsGroup.appendChild(el("div", { class: "cvt-settings-row", style: { marginTop:"6px" } },
